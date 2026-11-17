@@ -36,71 +36,71 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getRepos: () => request<ReposResponse>('/api/repos'),
+  getRepos: () => request<ReposResponse>('./api/repos'),
   saveConfig: (config: ScannerConfig) =>
-    request<ReposResponse>('/api/config', {
+    request<ReposResponse>('./api/config', {
       method: 'POST',
       body: JSON.stringify(config),
     }),
   resolveWorkspace: (workspaceUris: string[]) =>
-    request<{ matched_path: string | null }>('/api/resolve-workspace', {
+    request<{ matched_path: string | null }>('./api/resolve-workspace', {
       method: 'POST',
       body: JSON.stringify({ workspace_uris: workspaceUris }),
     }),
   getStatus: (repo: string) =>
-    request<RepoStatus>(`/api/status?repo=${encodeURIComponent(repo)}`),
+    request<RepoStatus>(`./api/status?repo=${encodeURIComponent(repo)}`),
   runGuarded: (
     repo: string,
     kind: GuardedOpKind,
     target: string | null,
     strategy: DirtyStrategy,
   ) =>
-    request<GuardedOpOutcome>('/api/git/guarded', {
+    request<GuardedOpOutcome>('./api/git/guarded', {
       method: 'POST',
       body: JSON.stringify({ repo, kind, target, strategy }),
     }),
   fetchAll: (repo: string) =>
-    request<OpResult>('/api/git/fetch', {
+    request<OpResult>('./api/git/fetch', {
       method: 'POST',
       body: JSON.stringify({ repo }),
     }),
   push: (repo: string) =>
-    request<OpResult>('/api/git/push', {
+    request<OpResult>('./api/git/push', {
       method: 'POST',
       body: JSON.stringify({ repo }),
     }),
   commitAll: (repo: string, message: string) =>
-    request<OpResult>('/api/git/commit', {
+    request<OpResult>('./api/git/commit', {
       method: 'POST',
       body: JSON.stringify({ repo, message }),
     }),
   stashSave: (repo: string, message?: string) =>
-    request<OpResult>('/api/git/stash-save', {
+    request<OpResult>('./api/git/stash-save', {
       method: 'POST',
       body: JSON.stringify({ repo, message }),
     }),
   stashPop: (repo: string) =>
-    request<OpResult>('/api/git/stash-pop', {
+    request<OpResult>('./api/git/stash-pop', {
       method: 'POST',
       body: JSON.stringify({ repo }),
     }),
   abortMerge: (repo: string) =>
-    request<OpResult>('/api/git/abort-merge', {
+    request<OpResult>('./api/git/abort-merge', {
       method: 'POST',
       body: JSON.stringify({ repo }),
     }),
   previewMerge: (repo: string, source: string) =>
-    request<ActionPreview>('/api/git/preview-merge', {
+    request<ActionPreview>('./api/git/preview-merge', {
       method: 'POST',
       body: JSON.stringify({ repo, source }),
     }),
   previewPush: (repo: string) =>
-    request<ActionPreview>('/api/git/preview-push', {
+    request<ActionPreview>('./api/git/preview-push', {
       method: 'POST',
       body: JSON.stringify({ repo }),
     }),
   sendConflictToChat: (repo: string, conversationId: string) =>
-    request<ConflictChatResponse>('/api/git/send-conflict-to-chat', {
+    request<ConflictChatResponse>('./api/git/send-conflict-to-chat', {
       method: 'POST',
       body: JSON.stringify({
         repo,

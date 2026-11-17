@@ -25,7 +25,7 @@ async fn static_handler(uri: Uri) -> Response {
     let raw = uri.path().trim_start_matches('/');
     let path = if raw.is_empty() { "index.html" } else { raw };
 
-    if let Some(file) = UiAssets::get(path).or_else(|| UiAssets::get("index.html")) {
+    if let Some(file) = UiAssets::get(path) {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
         return (
             StatusCode::OK,
@@ -34,7 +34,17 @@ async fn static_handler(uri: Uri) -> Response {
         )
             .into_response();
     }
-    (StatusCode::NOT_FOUND, "UI assets not found").into_response()
+    if !path.contains('.') {
+        if let Some(index) = UiAssets::get("index.html") {
+            return (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                index.data,
+            )
+                .into_response();
+        }
+    }
+    (StatusCode::NOT_FOUND, "Not found").into_response()
 }
 
 #[tokio::main]
