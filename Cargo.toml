@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "crates/git-widget-core",
+    "crates/git-widget-sidecar",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"

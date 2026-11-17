@@ -1,0 +1,6 @@
+[package]
+name = "git-widget-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
