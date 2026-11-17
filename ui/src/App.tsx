@@ -49,10 +49,14 @@ export default function App() {
   }, []);
 
   const loadRepos = useCallback(async () => {
-    const res = await api.getRepos();
-    setRepos(res.repos);
-    setConfig(res.config);
-    setSelectedRepo((prev) => prev || res.repos[0]?.path || '');
+    try {
+      const res = await api.getRepos();
+      setRepos(res.repos);
+      setConfig(res.config);
+      setSelectedRepo((prev) => prev || res.repos[0]?.path || '');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }, []);
 
   useEffect(() => {
