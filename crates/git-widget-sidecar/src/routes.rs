@@ -111,7 +111,7 @@ pub fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response>
     }
 }
 
-fn map_err(err: CoreError) -> Response {
+pub fn map_err(err: CoreError) -> Response {
     let status = match err {
         CoreError::InvalidInput(_) | CoreError::NotAGitRepo(_) => StatusCode::BAD_REQUEST,
         CoreError::Timeout(_, _) => StatusCode::GATEWAY_TIMEOUT,
@@ -152,12 +152,42 @@ pub async fn post_config(
     }
 }
 
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (
+                (bytes[i + 1] as char).to_digit(16),
+                (bytes[i + 2] as char).to_digit(16),
+            ) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn normalize_path_str(p: &Path) -> String {
+    let s = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let text = s.to_string_lossy().to_string();
+    text.strip_prefix(r"\\?\")
+        .unwrap_or(&text)
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
 fn uri_to_path(uri: &str) -> PathBuf {
     let trimmed = uri
         .strip_prefix("file:///")
         .or_else(|| uri.strip_prefix("file://"))
         .unwrap_or(uri);
-    let decoded = trimmed.replace("%20", " ").replace("%3A", ":").replace('/', "\\");
+    let decoded = percent_decode(trimmed).replace('/', "\\");
     PathBuf::from(decoded)
 }
 
@@ -175,14 +205,24 @@ pub async fn resolve_workspace(
     for uri in &body.workspace_uris {
         let ws = uri_to_path(uri);
         if ws.join(".git").exists() {
-            return Json(serde_json::json!({ "matched_path": ws.to_string_lossy() })).into_response();
+            let clean = ws.to_string_lossy().trim_end_matches('\\').to_string();
+            return Json(serde_json::json!({ "matched_path": clean })).into_response();
         }
-        let ws_lower = ws.to_string_lossy().to_lowercase();
-        if let Some(found) = repos
-            .iter()
-            .find(|r| r.path.to_lowercase().starts_with(&ws_lower))
-        {
+        let ws_norm = normalize_path_str(&ws);
+        if let Some(found) = repos.iter().find(|r| {
+            let r_norm = normalize_path_str(Path::new(&r.path));
+            r_norm == ws_norm || r_norm.starts_with(&format!("{ws_norm}\\"))
+        }) {
             return Json(serde_json::json!({ "matched_path": found.path })).into_response();
+        }
+        // Walk up in case workspace points to a subdirectory inside a git repo
+        let mut cur = ws.as_path();
+        while let Some(parent) = cur.parent() {
+            if parent.join(".git").exists() {
+                return Json(serde_json::json!({ "matched_path": parent.to_string_lossy() }))
+                    .into_response();
+            }
+            cur = parent;
         }
     }
     Json(serde_json::json!({ "matched_path": null })).into_response()
@@ -335,6 +375,33 @@ pub async fn preview_push_handler(
     }
 }
 
+pub async fn send_agentapi_message(
+    st: &AppState,
+    conv_override: Option<String>,
+    message: &str,
+) -> (bool, Option<String>) {
+    let Some(conv_id) = conv_override.or_else(|| st.conversation_id.clone()) else {
+        return (false, Some("missing conversation_id".to_string()));
+    };
+    let (program, prefix): (&str, Vec<&str>) = match st.agentapi_exe.as_deref() {
+        Some(exe) if !exe.is_empty() => (exe, vec!["agentapi"]),
+        _ => ("agentapi", vec![]),
+    };
+    let mut cmd = Command::new(program);
+    cmd.args(prefix).arg("send-message").arg(&conv_id).arg(message);
+    if let Some(pid) = &st.project_id {
+        cmd.env("ANTIGRAVITY_PROJECT_ID", pid);
+    }
+    match cmd.output().await {
+        Ok(out) if out.status.success() => (true, None),
+        Ok(out) => (
+            false,
+            Some(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        ),
+        Err(e) => (false, Some(e.to_string())),
+    }
+}
+
 pub async fn send_conflict_to_chat_handler(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -347,50 +414,13 @@ pub async fn send_conflict_to_chat_handler(
         Ok(p) => p,
         Err(e) => return map_err(e),
     };
-
-    let Some(conv_id) = b.conversation_id.or_else(|| st.conversation_id.clone()) else {
-        return Json(ConflictChatResponse {
-            sent: false,
-            prompt,
-            error: Some("missing conversation_id".to_string()),
-        })
-        .into_response();
-    };
-
-    let (program, prefix): (&str, Vec<&str>) = match st.agentapi_exe.as_deref() {
-        Some(exe) if !exe.is_empty() => (exe, vec!["agentapi"]),
-        _ => ("agentapi", vec![]),
-    };
-
-    let mut cmd = Command::new(program);
-    cmd.args(prefix)
-        .arg("send-message")
-        .arg(&conv_id)
-        .arg(&prompt);
-    if let Some(pid) = &st.project_id {
-        cmd.env("ANTIGRAVITY_PROJECT_ID", pid);
-    }
-
-    match cmd.output().await {
-        Ok(out) if out.status.success() => Json(ConflictChatResponse {
-            sent: true,
-            prompt,
-            error: None,
-        })
-        .into_response(),
-        Ok(out) => Json(ConflictChatResponse {
-            sent: false,
-            prompt,
-            error: Some(String::from_utf8_lossy(&out.stderr).trim().to_string()),
-        })
-        .into_response(),
-        Err(e) => Json(ConflictChatResponse {
-            sent: false,
-            prompt,
-            error: Some(e.to_string()),
-        })
-        .into_response(),
-    }
+    let (sent, error) = send_agentapi_message(&st, b.conversation_id, &prompt).await;
+    Json(ConflictChatResponse {
+        sent,
+        prompt,
+        error,
+    })
+    .into_response()
 }
 
 pub fn init_config() -> Arc<RwLock<ScannerConfig>> {

@@ -1,6 +1,7 @@
 //! Antigravity 2.0 Sidecar HTTP server with embedded React Web UI.
 
 mod config;
+mod diff_routes;
 mod routes;
 
 use axum::{
@@ -8,6 +9,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
+};
+use diff_routes::{
+    accept_hunk_handler, ask_ai_handler, diff_list_handler, discard_file_handler,
+    reject_hunk_handler, stage_file_handler, unstage_file_handler,
 };
 use routes::{
     abort_merge_handler, commit_handler, fetch_handler, get_repos, guarded_handler, init_config,
@@ -80,6 +85,13 @@ async fn main() {
             "/api/git/send-conflict-to-chat",
             post(send_conflict_to_chat_handler),
         )
+        .route("/api/diff", get(diff_list_handler))
+        .route("/api/diff/accept-hunk", post(accept_hunk_handler))
+        .route("/api/diff/reject-hunk", post(reject_hunk_handler))
+        .route("/api/diff/stage-file", post(stage_file_handler))
+        .route("/api/diff/unstage-file", post(unstage_file_handler))
+        .route("/api/diff/discard-file", post(discard_file_handler))
+        .route("/api/diff/ask-ai", post(ask_ai_handler))
         .fallback(static_handler)
         .with_state(state);
 

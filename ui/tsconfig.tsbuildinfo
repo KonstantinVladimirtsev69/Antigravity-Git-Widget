@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/modals.tsx","./src/api.ts","./src/main.tsx","./src/types.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/diffreview.tsx","./src/modals.tsx","./src/picker.tsx","./src/api.ts","./src/main.tsx","./src/types.ts"],"version":"5.9.3"}

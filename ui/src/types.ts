@@ -33,6 +33,22 @@ export interface RepoStatus {
   remote_branches: string[];
 }
 
+export interface DiffHunk {
+  index: number;
+  header: string;
+  lines: string[];
+  raw_patch: string;
+}
+
+export interface DiffFile {
+  path: string;
+  status: string;
+  staged: boolean;
+  additions: number;
+  deletions: number;
+  hunks: DiffHunk[];
+}
+
 export interface OpResult {
   success: boolean;
   message: string;
