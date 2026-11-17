@@ -1,0 +1,398 @@
+//! HTTP API route handlers for git-widget-sidecar.
+
+use crate::config::{load_config, save_config};
+use axum::{
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Json, Response},
+};
+use git_widget_core::{
+    ops::{commit_all, fetch_all, push_current, stash_pop, stash_save},
+    safety::{
+        abort_merge, build_conflict_prompt, preview_merge, preview_push, run_with_dirty_guard,
+        DirtyStrategy, GuardedOpKind,
+    },
+    scanner::{scan_repositories, RepoInfo, ScannerConfig},
+    status::get_status,
+    CoreError,
+};
+use serde::{Deserialize, Serialize};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use tokio::{process::Command, sync::RwLock};
+
+#[derive(Clone)]
+pub struct AppState {
+    pub ui_token: Option<String>,
+    pub agentapi_exe: Option<String>,
+    pub project_id: Option<String>,
+    pub conversation_id: Option<String>,
+    pub config: Arc<RwLock<ScannerConfig>>,
+}
+
+#[derive(Serialize)]
+pub struct ReposResponse {
+    pub repos: Vec<RepoInfo>,
+    pub config: ScannerConfig,
+}
+
+#[derive(Deserialize)]
+pub struct RepoQuery {
+    pub repo: String,
+}
+
+#[derive(Deserialize)]
+pub struct RepoBody {
+    pub repo: String,
+}
+
+#[derive(Deserialize)]
+pub struct CommitBody {
+    pub repo: String,
+    pub message: String,
+}
+
+#[derive(Deserialize)]
+pub struct StashBody {
+    pub repo: String,
+    pub message: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct PreviewMergeBody {
+    pub repo: String,
+    pub source: String,
+}
+
+#[derive(Deserialize)]
+pub struct GuardedBody {
+    pub repo: String,
+    pub kind: GuardedOpKind,
+    pub target: Option<String>,
+    pub strategy: DirtyStrategy,
+}
+
+#[derive(Deserialize)]
+pub struct ResolveWorkspaceBody {
+    pub workspace_uris: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ConflictChatBody {
+    pub repo: String,
+    pub conversation_id: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ConflictChatResponse {
+    pub sent: bool,
+    pub prompt: String,
+    pub error: Option<String>,
+}
+
+pub fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
+    let Some(expected) = state.ui_token.as_deref() else {
+        return Ok(());
+    };
+    let ok = headers
+        .get("x-sidecar-token")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|p| p == expected);
+    if ok {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "unauthorized" })),
+        )
+            .into_response())
+    }
+}
+
+fn map_err(err: CoreError) -> Response {
+    let status = match err {
+        CoreError::InvalidInput(_) | CoreError::NotAGitRepo(_) => StatusCode::BAD_REQUEST,
+        CoreError::Timeout(_, _) => StatusCode::GATEWAY_TIMEOUT,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, Json(serde_json::json!({ "error": err.to_string() }))).into_response()
+}
+
+fn scan_with_cfg(cfg: &ScannerConfig) -> Result<Vec<RepoInfo>, Response> {
+    let roots: Vec<PathBuf> = cfg.roots.iter().map(PathBuf::from).collect();
+    scan_repositories(&roots, cfg.max_depth).map_err(map_err)
+}
+
+pub async fn get_repos(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    let cfg = st.config.read().await.clone();
+    match scan_with_cfg(&cfg) {
+        Ok(repos) => Json(ReposResponse { repos, config: cfg }).into_response(),
+        Err(r) => r,
+    }
+}
+
+pub async fn post_config(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(cfg): Json<ScannerConfig>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    let _ = save_config(&cfg);
+    *st.config.write().await = cfg.clone();
+    match scan_with_cfg(&cfg) {
+        Ok(repos) => Json(ReposResponse { repos, config: cfg }).into_response(),
+        Err(r) => r,
+    }
+}
+
+fn uri_to_path(uri: &str) -> PathBuf {
+    let trimmed = uri
+        .strip_prefix("file:///")
+        .or_else(|| uri.strip_prefix("file://"))
+        .unwrap_or(uri);
+    let decoded = trimmed.replace("%20", " ").replace("%3A", ":").replace('/', "\\");
+    PathBuf::from(decoded)
+}
+
+pub async fn resolve_workspace(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<ResolveWorkspaceBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    let cfg = st.config.read().await.clone();
+    let repos = scan_with_cfg(&cfg).unwrap_or_default();
+
+    for uri in &body.workspace_uris {
+        let ws = uri_to_path(uri);
+        if ws.join(".git").exists() {
+            return Json(serde_json::json!({ "matched_path": ws.to_string_lossy() })).into_response();
+        }
+        let ws_lower = ws.to_string_lossy().to_lowercase();
+        if let Some(found) = repos
+            .iter()
+            .find(|r| r.path.to_lowercase().starts_with(&ws_lower))
+        {
+            return Json(serde_json::json!({ "matched_path": found.path })).into_response();
+        }
+    }
+    Json(serde_json::json!({ "matched_path": null })).into_response()
+}
+
+pub async fn status_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<RepoQuery>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match get_status(Path::new(&q.repo)).await {
+        Ok(s) => Json(s).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn guarded_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<GuardedBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match run_with_dirty_guard(
+        Path::new(&body.repo),
+        body.kind,
+        body.target.as_deref(),
+        body.strategy,
+    )
+    .await
+    {
+        Ok(out) => Json(out).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn fetch_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<RepoBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match fetch_all(Path::new(&b.repo)).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn push_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<RepoBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match push_current(Path::new(&b.repo)).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn commit_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<CommitBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match commit_all(Path::new(&b.repo), &b.message).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn stash_save_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<StashBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match stash_save(Path::new(&b.repo), b.message.as_deref()).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn stash_pop_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<RepoBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match stash_pop(Path::new(&b.repo)).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn abort_merge_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<RepoBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match abort_merge(Path::new(&b.repo)).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn preview_merge_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<PreviewMergeBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match preview_merge(Path::new(&b.repo), &b.source).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn preview_push_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<RepoBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match preview_push(Path::new(&b.repo)).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn send_conflict_to_chat_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<ConflictChatBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    let prompt = match build_conflict_prompt(Path::new(&b.repo)).await {
+        Ok(p) => p,
+        Err(e) => return map_err(e),
+    };
+
+    let Some(conv_id) = b.conversation_id.or_else(|| st.conversation_id.clone()) else {
+        return Json(ConflictChatResponse {
+            sent: false,
+            prompt,
+            error: Some("missing conversation_id".to_string()),
+        })
+        .into_response();
+    };
+
+    let (program, prefix): (&str, Vec<&str>) = match st.agentapi_exe.as_deref() {
+        Some(exe) if !exe.is_empty() => (exe, vec!["agentapi"]),
+        _ => ("agentapi", vec![]),
+    };
+
+    let mut cmd = Command::new(program);
+    cmd.args(prefix)
+        .arg("send-message")
+        .arg(&conv_id)
+        .arg(&prompt);
+    if let Some(pid) = &st.project_id {
+        cmd.env("ANTIGRAVITY_PROJECT_ID", pid);
+    }
+
+    match cmd.output().await {
+        Ok(out) if out.status.success() => Json(ConflictChatResponse {
+            sent: true,
+            prompt,
+            error: None,
+        })
+        .into_response(),
+        Ok(out) => Json(ConflictChatResponse {
+            sent: false,
+            prompt,
+            error: Some(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+        })
+        .into_response(),
+        Err(e) => Json(ConflictChatResponse {
+            sent: false,
+            prompt,
+            error: Some(e.to_string()),
+        })
+        .into_response(),
+    }
+}
+
+pub fn init_config() -> Arc<RwLock<ScannerConfig>> {
+    Arc::new(RwLock::new(load_config()))
+}

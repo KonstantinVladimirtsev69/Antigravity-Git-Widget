@@ -1,144 +1,40 @@
-//! Antigravity 2.0 Sidecar HTTP server (Phase 1 Spike).
+//! Antigravity 2.0 Sidecar HTTP server with embedded React Web UI.
+
+mod config;
+mod routes;
 
 use axum::{
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Json},
+    http::{header, StatusCode, Uri},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
-use serde::{Deserialize, Serialize};
+use routes::{
+    abort_merge_handler, commit_handler, fetch_handler, get_repos, guarded_handler, init_config,
+    post_config, preview_merge_handler, preview_push_handler, push_handler, resolve_workspace,
+    send_conflict_to_chat_handler, stash_pop_handler, stash_save_handler, status_handler, AppState,
+};
+use rust_embed::Embed;
 use std::{net::SocketAddr, sync::Arc};
-use tokio::process::Command;
 
-#[derive(Clone)]
-struct AppState {
-    ui_token: Option<String>,
-    agentapi_exe: Option<String>,
-    project_id: Option<String>,
-    conversation_id: Option<String>,
-}
+#[derive(Embed)]
+#[folder = "../../ui/dist"]
+struct UiAssets;
 
-#[derive(Serialize)]
-struct EnvReport {
-    core_version: &'static str,
-    sidecar_port: Option<String>,
-    has_ui_token: bool,
-    has_ls_address: bool,
-    has_csrf_token: bool,
-    project_id: Option<String>,
-    conversation_id: Option<String>,
-    agentapi_exe: Option<String>,
-}
+async fn static_handler(uri: Uri) -> Response {
+    let raw = uri.path().trim_start_matches('/');
+    let path = if raw.is_empty() { "index.html" } else { raw };
 
-#[derive(Deserialize)]
-struct TestChatRequest {
-    conversation_id: Option<String>,
-    message: String,
-}
-
-#[derive(Serialize)]
-struct TestChatResponse {
-    ok: bool,
-    stdout: String,
-    stderr: String,
-}
-
-fn is_authorized(state: &AppState, headers: &HeaderMap) -> bool {
-    let Some(expected) = state.ui_token.as_deref() else {
-        return true;
-    };
-    headers
-        .get("x-sidecar-token")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|provided| provided == expected)
-}
-
-async fn index_handler() -> Html<&'static str> {
-    Html(INDEX_HTML)
-}
-
-async fn env_handler(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    if !is_authorized(&state, &headers) {
+    if let Some(file) = UiAssets::get(path).or_else(|| UiAssets::get("index.html")) {
+        let mime = mime_guess::from_path(path).first_or_octet_stream();
         return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "unauthorized" })),
-        )
-            .into_response();
-    }
-
-    let report = EnvReport {
-        core_version: git_widget_core::core_version(),
-        sidecar_port: std::env::var("ANTIGRAVITY_SIDECAR_WEB_PORT").ok(),
-        has_ui_token: state.ui_token.is_some(),
-        has_ls_address: std::env::var("ANTIGRAVITY_LS_ADDRESS").is_ok(),
-        has_csrf_token: std::env::var("ANTIGRAVITY_CSRF_TOKEN").is_ok(),
-        project_id: state.project_id.clone(),
-        conversation_id: state.conversation_id.clone(),
-        agentapi_exe: state.agentapi_exe.clone(),
-    };
-
-    (StatusCode::OK, Json(report)).into_response()
-}
-
-async fn test_chat_handler(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(payload): Json<TestChatRequest>,
-) -> impl IntoResponse {
-    if !is_authorized(&state, &headers) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "unauthorized" })),
-        )
-            .into_response();
-    }
-
-    let Some(conv_id) = payload
-        .conversation_id
-        .or_else(|| state.conversation_id.clone())
-    else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "missing conversation_id" })),
-        )
-            .into_response();
-    };
-
-    let (program, prefix_args): (&str, Vec<&str>) = match state.agentapi_exe.as_deref() {
-        Some(exe) if !exe.is_empty() => (exe, vec!["agentapi"]),
-        _ => ("agentapi", vec![]),
-    };
-
-    let mut cmd = Command::new(program);
-    cmd.args(prefix_args)
-        .arg("send-message")
-        .arg(&conv_id)
-        .arg(&payload.message);
-
-    if let Some(pid) = &state.project_id {
-        cmd.env("ANTIGRAVITY_PROJECT_ID", pid);
-    }
-
-    match cmd.output().await {
-        Ok(out) => (
             StatusCode::OK,
-            Json(TestChatResponse {
-                ok: out.status.success(),
-                stdout: String::from_utf8_lossy(&out.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&out.stderr).to_string(),
-            }),
+            [(header::CONTENT_TYPE, mime.as_ref())],
+            file.data,
         )
-            .into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        )
-            .into_response(),
+            .into_response();
     }
+    (StatusCode::NOT_FOUND, "UI assets not found").into_response()
 }
 
 #[tokio::main]
@@ -153,12 +49,28 @@ async fn main() {
         agentapi_exe: std::env::var("ANTIGRAVITY_AGENTAPI_EXE").ok(),
         project_id: std::env::var("ANTIGRAVITY_PROJECT_ID").ok(),
         conversation_id: std::env::var("ANTIGRAVITY_CONVERSATION_ID").ok(),
+        config: init_config(),
     });
 
     let app = Router::new()
-        .route("/", get(index_handler))
-        .route("/api/env", get(env_handler))
-        .route("/api/test-chat", post(test_chat_handler))
+        .route("/api/repos", get(get_repos))
+        .route("/api/config", post(post_config))
+        .route("/api/resolve-workspace", post(resolve_workspace))
+        .route("/api/status", get(status_handler))
+        .route("/api/git/guarded", post(guarded_handler))
+        .route("/api/git/fetch", post(fetch_handler))
+        .route("/api/git/push", post(push_handler))
+        .route("/api/git/commit", post(commit_handler))
+        .route("/api/git/stash-save", post(stash_save_handler))
+        .route("/api/git/stash-pop", post(stash_pop_handler))
+        .route("/api/git/abort-merge", post(abort_merge_handler))
+        .route("/api/git/preview-merge", post(preview_merge_handler))
+        .route("/api/git/preview-push", post(preview_push_handler))
+        .route(
+            "/api/git/send-conflict-to-chat",
+            post(send_conflict_to_chat_handler),
+        )
+        .fallback(static_handler)
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -168,88 +80,3 @@ async fn main() {
     println!("[git-widget-sidecar] listening on http://{addr}");
     axum::serve(listener, app).await.expect("server error");
 }
-
-const INDEX_HTML: &str = r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Git Widget Spike</title>
-  <style>
-    body {
-      margin: 0; padding: 12px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--background, #18181b);
-      color: var(--foreground, #f4f4f5);
-      font-size: 13px;
-    }
-    pre {
-      background: rgba(128,128,128,0.12);
-      padding: 8px; border-radius: 6px;
-      overflow-x: auto; font-size: 11px;
-    }
-    button {
-      padding: 6px 10px; border-radius: 6px; border: 1px solid rgba(128,128,128,0.3);
-      background: rgba(128,128,128,0.2); color: inherit; cursor: pointer;
-    }
-  </style>
-</head>
-<body>
-  <h3 style="margin-top:0">Git Widget — Phase 1 Spike</h3>
-  <div><strong>Active Workspaces (postMessage):</strong></div>
-  <pre id="workspaces">Waiting for workspace-change...</pre>
-  <div><strong>URL Query &amp; Backend Env:</strong></div>
-  <pre id="env">Loading...</pre>
-  <button id="pingBtn">Test agentapi send-message</button>
-  <pre id="chatOut"></pre>
-  <script>
-    const params = new URLSearchParams(location.search);
-    const token = params.get('token') || '';
-    const conversationId = params.get('conversationId') || '';
-
-    window.addEventListener('message', (event) => {
-      if (event.data?.type === 'theme-change') {
-        const vars = event.data.payload?.cssVariables || {};
-        for (const [k, v] of Object.entries(vars)) {
-          document.documentElement.style.setProperty(k, v);
-        }
-      } else if (event.data?.type === 'workspace-change') {
-        const uris = event.data.payload?.workspaceUris || [];
-        document.getElementById('workspaces').textContent = JSON.stringify(uris, null, 2);
-      }
-    });
-
-    const headers = token ? { 'X-Sidecar-Token': token } : {};
-    fetch('/api/env', { headers })
-      .then(r => r.json())
-      .then(data => {
-        document.getElementById('env').textContent = JSON.stringify({
-          queryConversationId: conversationId,
-          backend: data
-        }, null, 2);
-      })
-      .catch(err => {
-        document.getElementById('env').textContent = String(err);
-      });
-
-    document.getElementById('pingBtn').onclick = async () => {
-      const out = document.getElementById('chatOut');
-      out.textContent = 'Sending...';
-      try {
-        const res = await fetch('/api/test-chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...headers },
-          body: JSON.stringify({
-            conversation_id: conversationId || null,
-            message: '[Git Widget Spike] Test message from AUX_PANE'
-          })
-        });
-        out.textContent = JSON.stringify(await res.json(), null, 2);
-      } catch (e) {
-        out.textContent = String(e);
-      }
-    };
-  </script>
-</body>
-</html>
-"#;

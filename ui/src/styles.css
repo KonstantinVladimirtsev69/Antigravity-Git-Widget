@@ -1,0 +1,128 @@
+:root {
+  color-scheme: dark;
+  --gw-bg: var(--background, #18181b);
+  --gw-fg: var(--foreground, #f4f4f5);
+  --gw-muted: var(--muted-foreground, #a1a1aa);
+  --gw-card: rgba(128, 128, 128, 0.08);
+  --gw-border: rgba(128, 128, 128, 0.22);
+  --gw-accent: #3b82f6;
+  --gw-warn: #f59e0b;
+  --gw-danger: #ef4444;
+  --gw-ok: #10b981;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 10px;
+  background: var(--gw-bg);
+  color: var(--gw-fg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.gw-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gw-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gw-card {
+  background: var(--gw-card);
+  border: 1px solid var(--gw-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.gw-select,
+.gw-input,
+.gw-textarea {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--gw-fg);
+  border: 1px solid var(--gw-border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.gw-btn {
+  border: 1px solid var(--gw-border);
+  background: rgba(128, 128, 128, 0.16);
+  color: var(--gw-fg);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gw-btn:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.28);
+}
+
+.gw-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.gw-btn-primary {
+  background: var(--gw-accent);
+  border-color: var(--gw-accent);
+  color: #fff;
+}
+
+.gw-btn-danger {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: var(--gw-danger);
+  color: #fecaca;
+}
+
+.gw-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--gw-border);
+  background: rgba(128, 128, 128, 0.14);
+}
+
+.gw-badge-warn {
+  border-color: var(--gw-warn);
+  color: #fde68a;
+}
+
+.gw-badge-danger {
+  border-color: var(--gw-danger);
+  color: #fecaca;
+}
+
+.gw-badge-ok {
+  border-color: var(--gw-ok);
+  color: #a7f3d0;
+}
+
+.gw-muted {
+  color: var(--gw-muted);
+  font-size: 11px;
+}
+
+.gw-list {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  max-height: 110px;
+  overflow-y: auto;
+  font-size: 11px;
+}
