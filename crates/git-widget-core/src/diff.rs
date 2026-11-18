@@ -69,8 +69,9 @@ pub async fn get_diff_files(repo_path: &Path) -> Result<Vec<DiffFile>> {
 }
 
 fn parse_unified_diff(raw: &str, staged: bool) -> Vec<DiffFile> {
+    let normalized = raw.replace("\r\n", "\n");
     let mut result = Vec::new();
-    let sections: Vec<&str> = raw.split("\ndiff --git ").collect();
+    let sections: Vec<&str> = normalized.split("\ndiff --git ").collect();
 
     for (idx, sec) in sections.into_iter().enumerate() {
         let block = if idx == 0 {

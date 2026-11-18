@@ -30,7 +30,8 @@ export default function App() {
   const [autoMatched, setAutoMatched] = useState<boolean>(false);
   const [status, setStatus] = useState<RepoStatus | null>(null);
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
-  const [mergeSource, setMergeSource] = useState<string>('');
+  const [mergeTarget, setMergeTarget] = useState<string>('');
+  const [mergeDir, setMergeDir] = useState<'into_current' | 'current_into_target'>('current_into_target');
   const [commitMsg, setCommitMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string>('');
@@ -54,8 +55,10 @@ export default function App() {
       const [st, df] = await Promise.all([api.getStatus(repoPath), api.getDiff(repoPath)]);
       setStatus(st);
       setDiffFiles(df);
-      setMergeSource((prev) => {
+      setMergeTarget((prev) => {
         if (prev && st.local_branches.includes(prev) && prev !== st.branch) return prev;
+        if (st.local_branches.includes('main') && st.branch !== 'main') return 'main';
+        if (st.local_branches.includes('developer') && st.branch !== 'developer') return 'developer';
         return st.local_branches.find((b) => b !== st.branch) ?? '';
       });
     } catch (e) {
@@ -139,16 +142,59 @@ export default function App() {
     }
   };
 
+  const runMergeIntoTarget = async (targetBranch: string, sourceBranch: string) => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const ck = await api.runGuarded(selectedRepo, 'checkout', targetBranch, {
+        mode: 'fail_if_dirty',
+      });
+      if (ck.blocked_dirty) {
+        setDirtyPrompt({ kind: 'checkout', target: targetBranch, files: ck.dirty_files });
+        return;
+      }
+      const mg = await api.runGuarded(selectedRepo, 'merge', sourceBranch, {
+        mode: 'fail_if_dirty',
+      });
+      setNotice(mg.op_result?.message || `Merged ${sourceBranch} → ${targetBranch}`);
+      await refreshRepoData(selectedRepo);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleMergeClick = async () => {
-    if (!selectedRepo || !mergeSource) return;
+    if (!selectedRepo || !mergeTarget || !status) return;
+    if (mergeDir === 'current_into_target') {
+      const isProtected = mergeTarget === 'main' || mergeTarget === 'master';
+      if (isProtected) {
+        setProtectedPrompt({
+          action: 'merge',
+          preview: {
+            source: status.branch,
+            target: mergeTarget,
+            is_protected: true,
+            commit_count: 0,
+            commits: [`Ветка ${status.branch} будет влита в ${mergeTarget} (checkout ${mergeTarget} → merge ${status.branch})`],
+          },
+        });
+      } else {
+        await runMergeIntoTarget(mergeTarget, status.branch);
+      }
+      return;
+    }
+
     setBusy(true);
     setError('');
     try {
-      const preview = await api.previewMerge(selectedRepo, mergeSource);
+      const preview = await api.previewMerge(selectedRepo, mergeTarget);
       if (preview.is_protected) {
         setProtectedPrompt({ action: 'merge', preview });
       } else {
-        await executeGuarded('merge', mergeSource, { mode: 'fail_if_dirty' });
+        await executeGuarded('merge', mergeTarget, { mode: 'fail_if_dirty' });
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -297,12 +343,24 @@ export default function App() {
       {tab === 'flow' && status && (
         <>
           <div className="gw-card gw-stack">
-            <Picker
-              value={status.branch}
-              options={status.local_branches.map((b) => ({ value: b, label: `checkout: ${b}` }))}
-              disabled={busy}
-              onChange={(b) => void executeGuarded('checkout', b, { mode: 'fail_if_dirty' })}
-            />
+            <div className="gw-row">
+              <span className="gw-muted" style={{ minWidth: 68 }}>Ветка:</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Picker
+                  value={status.branch}
+                  options={status.local_branches.map((b) => ({
+                    value: b,
+                    label: b === status.branch ? `${b} (текущая)` : `Переключиться → ${b}`,
+                  }))}
+                  disabled={busy}
+                  onChange={(b) => {
+                    if (b !== status.branch) {
+                      void executeGuarded('checkout', b, { mode: 'fail_if_dirty' });
+                    }
+                  }}
+                />
+              </div>
+            </div>
 
             <div className="gw-row">
               <button
@@ -332,20 +390,38 @@ export default function App() {
             </div>
 
             <div className="gw-row">
+              <button
+                type="button"
+                className="gw-btn gw-btn-xs"
+                title="Сменить направление merge"
+                onClick={() =>
+                  setMergeDir((d) =>
+                    d === 'current_into_target' ? 'into_current' : 'current_into_target',
+                  )
+                }
+              >
+                {mergeDir === 'current_into_target' ? `${status.branch} →` : `← в ${status.branch}`}
+              </button>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <Picker
-                  value={mergeSource}
-                  placeholder="Ветка для merge..."
+                  value={mergeTarget}
+                  placeholder="Выбрать ветку..."
                   options={status.local_branches
                     .filter((b) => b !== status.branch)
-                    .map((b) => ({ value: b, label: `${b} → ${status.branch}` }))}
+                    .map((b) => ({
+                      value: b,
+                      label:
+                        mergeDir === 'current_into_target'
+                          ? `${status.branch} → ${b}`
+                          : `${b} → ${status.branch}`,
+                    }))}
                   disabled={busy}
-                  onChange={setMergeSource}
+                  onChange={setMergeTarget}
                 />
               </div>
               <button
                 className="gw-btn"
-                disabled={busy || !mergeSource}
+                disabled={busy || !mergeTarget}
                 onClick={() => void handleMergeClick()}
               >
                 Merge
@@ -381,7 +457,11 @@ export default function App() {
                 const act = protectedPrompt.action;
                 setProtectedPrompt(null);
                 if (act === 'merge') {
-                  await executeGuarded('merge', mergeSource, { mode: 'fail_if_dirty' });
+                  if (mergeDir === 'current_into_target' && status) {
+                    await runMergeIntoTarget(mergeTarget, status.branch);
+                  } else {
+                    await executeGuarded('merge', mergeTarget, { mode: 'fail_if_dirty' });
+                  }
                 } else {
                   await runSimple(() => api.push(selectedRepo));
                 }

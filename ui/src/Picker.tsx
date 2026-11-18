@@ -37,7 +37,7 @@ export function Picker({
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  const current = options.find((o) => o.value === value);
+  const current = options.find((o) => o.value.toLowerCase() === value.toLowerCase());
   const filtered = query.trim()
     ? options.filter(
         (o) =>
@@ -80,7 +80,7 @@ export function Picker({
               <button
                 key={opt.value}
                 type="button"
-                className={`gw-picker-item ${opt.value === value ? 'active' : ''}`}
+                className={`gw-picker-item ${opt.value.toLowerCase() === value.toLowerCase() ? 'active' : ''}`}
                 onClick={() => {
                   onChange(opt.value);
                   setOpen(false);

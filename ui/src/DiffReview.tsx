@@ -35,6 +35,7 @@ export function DiffReview({
       await onRefresh();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
+      await onRefresh();
     }
   };
 

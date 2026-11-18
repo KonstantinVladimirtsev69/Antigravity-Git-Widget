@@ -204,10 +204,6 @@ pub async fn resolve_workspace(
 
     for uri in &body.workspace_uris {
         let ws = uri_to_path(uri);
-        if ws.join(".git").exists() {
-            let clean = ws.to_string_lossy().trim_end_matches('\\').to_string();
-            return Json(serde_json::json!({ "matched_path": clean })).into_response();
-        }
         let ws_norm = normalize_path_str(&ws);
         if let Some(found) = repos.iter().find(|r| {
             let r_norm = normalize_path_str(Path::new(&r.path));
@@ -215,12 +211,21 @@ pub async fn resolve_workspace(
         }) {
             return Json(serde_json::json!({ "matched_path": found.path })).into_response();
         }
+        if ws.join(".git").exists() {
+            let clean = ws.to_string_lossy().trim_end_matches('\\').to_string();
+            return Json(serde_json::json!({ "matched_path": clean })).into_response();
+        }
         // Walk up in case workspace points to a subdirectory inside a git repo
         let mut cur = ws.as_path();
         while let Some(parent) = cur.parent() {
             if parent.join(".git").exists() {
-                return Json(serde_json::json!({ "matched_path": parent.to_string_lossy() }))
-                    .into_response();
+                let p_norm = normalize_path_str(parent);
+                let matched = repos
+                    .iter()
+                    .find(|r| normalize_path_str(Path::new(&r.path)) == p_norm)
+                    .map(|r| r.path.clone())
+                    .unwrap_or_else(|| parent.to_string_lossy().to_string());
+                return Json(serde_json::json!({ "matched_path": matched })).into_response();
             }
             cur = parent;
         }
