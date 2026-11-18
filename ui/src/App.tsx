@@ -3,15 +3,19 @@ import { CONVERSATION_ID, api } from './api';
 import { BranchPanel } from './BranchPanel';
 import { ChangesPanel } from './ChangesPanel';
 import { DiffReview } from './DiffReview';
+import { GraphPanel } from './GraphPanel';
 import { DirtyModal, PreviewModal, SettingsPanel } from './Modals';
 import { Picker } from './Picker';
+import { PrPanel } from './PrPanel';
 import { StashPanel } from './StashPanel';
 import type {
   ActionPreview,
   CommitInfo,
   DiffFile,
   DirtyStrategy,
+  GraphResponse,
   GuardedOpKind,
+  PrListResponse,
   RepoInfo,
   RepoStatus,
   ScannerConfig,
@@ -37,6 +41,10 @@ export default function App() {
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
   const [commits, setCommits] = useState<CommitInfo[]>([]);
   const [stashes, setStashes] = useState<StashEntry[]>([]);
+  const [graphData, setGraphData] = useState<GraphResponse | null>(null);
+  const [graphAll, setGraphAll] = useState<boolean>(true);
+  const [graphAuthor, setGraphAuthor] = useState<string>('');
+  const [prData, setPrData] = useState<PrListResponse | null>(null);
   const [selectedCommit, setSelectedCommit] = useState<string>('');
   const [diffMode, setDiffMode] = useState<'working' | 'branch' | 'commit'>('working');
   const [mergeTarget, setMergeTarget] = useState<string>('');
@@ -67,13 +75,16 @@ export default function App() {
       repoPath: string,
       mode: 'working' | 'branch' | 'commit' = diffMode,
       commitHash: string = selectedCommit,
+      allBranches: boolean = graphAll,
+      author: string = graphAuthor,
     ) => {
       if (!repoPath) return;
       try {
-        const [st, cm, sl] = await Promise.all([
+        const [st, cm, sl, gr] = await Promise.all([
           api.getStatus(repoPath),
           api.getCommits(repoPath),
           api.listStashes(repoPath),
+          api.getGraph(repoPath, allBranches, author || undefined),
         ]);
         const effectiveCommit = commitHash || cm[0]?.hash || '';
         const df = await api.getDiff(
@@ -84,6 +95,7 @@ export default function App() {
         setStatus(st);
         setCommits(cm);
         setStashes(sl);
+        setGraphData(gr);
         if (!commitHash && cm[0]?.hash) setSelectedCommit(cm[0].hash);
         setDiffFiles(df);
         setSelectedRemote((prev) => {
@@ -101,7 +113,7 @@ export default function App() {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [diffMode, selectedCommit],
+    [diffMode, selectedCommit, graphAll, graphAuthor],
   );
 
   useEffect(() => {
@@ -144,7 +156,9 @@ export default function App() {
       setNotice('');
       setError('');
       setSelectedCommit('');
-      void refreshRepoData(selectedRepo, diffMode, '');
+      setGraphAuthor('');
+      void refreshRepoData(selectedRepo, diffMode, '', graphAll, '');
+      void api.getPrs(selectedRepo).then(setPrData).catch(() => setPrData(null));
     }
   }, [selectedRepo]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -590,6 +604,14 @@ export default function App() {
             unstaged={status.unstaged_changes}
             busy={busy}
             onCommit={(msg, amend) => runSimple(() => api.commitAll(selectedRepo, msg, amend))}
+            onSuggestCommit={async () => {
+              await runSimple(async () => {
+                const res = await api.suggestCommit(selectedRepo, CONVERSATION_ID);
+                if (res.sent) return { message: 'Asked AI chat for commit message' };
+                await navigator.clipboard.writeText(res.prompt);
+                return { message: 'Copied diff summary to clipboard' };
+              });
+            }}
             onUndoCommit={() => runSimple(() => api.undoCommit(selectedRepo))}
             onStageFile={(p) =>
               void runSimple(async () => {
@@ -617,6 +639,39 @@ export default function App() {
               setFocusFile(p);
               setTab('diff');
             }}
+          />
+
+          <GraphPanel
+            repo={selectedRepo}
+            commits={graphData?.commits ?? []}
+            authors={graphData?.authors ?? []}
+            githubUrl={graphData?.github_url ?? null}
+            allBranches={graphAll}
+            authorFilter={graphAuthor}
+            busy={busy}
+            onToggleAll={(all) => {
+              setGraphAll(all);
+              void refreshRepoData(selectedRepo, diffMode, selectedCommit, all, graphAuthor);
+            }}
+            onAuthorFilter={(author) => {
+              setGraphAuthor(author);
+              void refreshRepoData(selectedRepo, diffMode, selectedCommit, graphAll, author);
+            }}
+            onCherryPick={(hash) => void runSimple(() => api.cherryPick(selectedRepo, hash))}
+            onInspectCommit={(hash, file) => {
+              setSelectedCommit(hash);
+              setDiffMode('commit');
+              setFocusFile(file ?? null);
+              setTab('diff');
+              void refreshRepoData(selectedRepo, 'commit', hash, graphAll, graphAuthor);
+            }}
+            onNotify={setNotice}
+          />
+
+          <PrPanel
+            prData={prData}
+            currentBranch={status.branch}
+            baseBranch={mergeTarget || 'main'}
           />
 
           <StashPanel

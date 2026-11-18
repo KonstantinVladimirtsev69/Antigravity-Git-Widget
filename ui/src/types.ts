@@ -43,6 +43,66 @@ export interface StashEntry {
   date_rel: string;
 }
 
+export interface RefDecoration {
+  name: string;
+  kind: 'head' | 'local' | 'remote' | 'tag';
+}
+
+export interface GraphCommit {
+  hash: string;
+  short_hash: string;
+  parents: string[];
+  subject: string;
+  author_name: string;
+  author_email: string;
+  date_rel: string;
+  date_exact: string;
+  refs: RefDecoration[];
+  is_head: boolean;
+}
+
+export interface AuthorStat {
+  name: string;
+  count: number;
+  last_date: string;
+}
+
+export interface GraphResponse {
+  commits: GraphCommit[];
+  authors: AuthorStat[];
+  github_url: string | null;
+}
+
+export interface CommitFileStat {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface CommitDetails {
+  hash: string;
+  files: CommitFileStat[];
+  total_additions: number;
+  total_deletions: number;
+}
+
+export interface PullRequestInfo {
+  number: number;
+  title: string;
+  author: string;
+  head_ref: string;
+  base_ref: string;
+  url: string;
+  updated_at: string;
+}
+
+export interface PrListResponse {
+  gh_available: boolean;
+  github_url: string | null;
+  prs: PullRequestInfo[];
+}
+
 export interface DiffHunk {
   index: number;
   header: string;

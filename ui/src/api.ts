@@ -1,12 +1,15 @@
 import type {
   ActionPreview,
+  CommitDetails,
   CommitInfo,
   ConflictChatResponse,
   DiffFile,
   DirtyStrategy,
+  GraphResponse,
   GuardedOpKind,
   GuardedOpOutcome,
   OpResult,
+  PrListResponse,
   RepoStatus,
   ReposResponse,
   ScannerConfig,
@@ -117,6 +120,21 @@ export const api = {
     }),
   getCommits: (repo: string) =>
     request<CommitInfo[]>(`./api/commits?repo=${encodeURIComponent(repo)}`),
+  getGraph: (repo: string, all = true, author?: string) =>
+    request<GraphResponse>(
+      `./api/graph?repo=${encodeURIComponent(repo)}&all=${all}${author ? `&author=${encodeURIComponent(author)}` : ''}`,
+    ),
+  getCommitDetails: (repo: string, hash: string) =>
+    request<CommitDetails>(
+      `./api/commit-details?repo=${encodeURIComponent(repo)}&hash=${encodeURIComponent(hash)}`,
+    ),
+  getPrs: (repo: string) =>
+    request<PrListResponse>(`./api/prs?repo=${encodeURIComponent(repo)}`),
+  suggestCommit: (repo: string, conversationId: string) =>
+    request<ConflictChatResponse>('./api/ai/suggest-commit', {
+      method: 'POST',
+      body: JSON.stringify({ repo, conversation_id: conversationId || null }),
+    }),
   getDiff: (repo: string, mode: 'working' | 'branch' | 'commit' = 'working', commit?: string) =>
     request<DiffFile[]>(
       `./api/diff?repo=${encodeURIComponent(repo)}&mode=${mode}${commit ? `&commit=${encodeURIComponent(commit)}` : ''}`,
