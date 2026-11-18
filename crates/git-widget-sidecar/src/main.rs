@@ -21,7 +21,10 @@ use diff_routes::{
     accept_hunk_handler, ask_ai_handler, commits_list_handler, diff_list_handler,
     discard_file_handler, reject_hunk_handler, stage_file_handler, unstage_file_handler,
 };
-use graph_routes::{commit_details_handler, graph_handler, prs_handler, suggest_commit_handler};
+use graph_routes::{
+    commit_details_handler, create_github_repo_handler, graph_handler, prs_handler,
+    suggest_commit_handler,
+};
 use routes::{
     abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, get_repos,
     guarded_handler, init_config, init_repo_handler, post_config, preview_merge_handler,
@@ -115,6 +118,7 @@ async fn main() {
         .route("/api/graph", get(graph_handler))
         .route("/api/commit-details", get(commit_details_handler))
         .route("/api/prs", get(prs_handler))
+        .route("/api/github/create-repo", post(create_github_repo_handler))
         .route("/api/ai/suggest-commit", post(suggest_commit_handler))
         .route("/api/diff", get(diff_list_handler))
         .route("/api/diff/accept-hunk", post(accept_hunk_handler))

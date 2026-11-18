@@ -7,6 +7,7 @@ export interface RepoInfo {
 export interface ScannerConfig {
   roots: string[];
   max_depth: number;
+  github_token?: string | null;
 }
 
 export interface ReposResponse {

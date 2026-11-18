@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, developer, "gsd/**"]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install and build UI
+        working-directory: ui
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npm run build
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Cargo tests
+        run: cargo test --workspace
+
+      - name: Build release sidecar binary
+        run: cargo build --release --workspace
+
+      - name: Upload release binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: git-widget-sidecar-windows-x64
+          path: |
+            target/release/git-widget-sidecar.exe
+            install.ps1
+            README.md
+            README.ru.md
+            LICENSE

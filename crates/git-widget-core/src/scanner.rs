@@ -30,6 +30,8 @@ pub struct RepoInfo {
 pub struct ScannerConfig {
     pub roots: Vec<String>,
     pub max_depth: usize,
+    #[serde(default)]
+    pub github_token: Option<String>,
 }
 
 impl Default for ScannerConfig {
@@ -37,6 +39,7 @@ impl Default for ScannerConfig {
         Self {
             roots: vec![r"C:\Projects\".to_string()],
             max_depth: 3,
+            github_token: None,
         }
     }
 }

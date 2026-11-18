@@ -66,6 +66,20 @@ export const api = {
     request<OpResult>('./api/git/publish', { method: 'POST', body: JSON.stringify({ repo, remote }) }),
   addRemote: (repo: string, name: string, url: string) =>
     request<OpResult>('./api/git/add-remote', { method: 'POST', body: JSON.stringify({ repo, name, url }) }),
+  createGithubRepo: (
+    repo: string,
+    payload: {
+      name: string;
+      description: string;
+      private: boolean;
+      use_ssh: boolean;
+      token?: string;
+    },
+  ) =>
+    request<OpResult>('./api/github/create-repo', {
+      method: 'POST',
+      body: JSON.stringify({ repo, ...payload }),
+    }),
   initRepo: (repo: string) =>
     request<OpResult>('./api/git/init-repo', { method: 'POST', body: JSON.stringify({ repo }) }),
   commitAll: (repo: string, message: string, amend = false) =>

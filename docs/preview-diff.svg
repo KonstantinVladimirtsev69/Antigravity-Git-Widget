@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 380" width="420" height="380">
+  <rect width="420" height="380" rx="12" fill="#121215" stroke="#27272f" stroke-width="1.5"/>
+  <!-- Mode tabs -->
+  <rect x="14" y="14" width="392" height="28" rx="7" fill="#18181d" stroke="#27272f"/>
+  <rect x="17" y="17" width="128" height="22" rx="5" fill="#26262f"/>
+  <text x="58" y="32" fill="#f4f4f5" font-family="Segoe UI, sans-serif" font-size="11.5" font-weight="600">Working</text>
+  <text x="190" y="32" fill="#7c7f8a" font-family="Segoe UI, sans-serif" font-size="11.5">Branch</text>
+  <text x="315" y="32" fill="#7c7f8a" font-family="Segoe UI, sans-serif" font-size="11.5">Commits</text>
+
+  <!-- File Diff Card -->
+  <rect x="14" y="52" width="392" height="215" rx="8" fill="#18181d" stroke="#27272f"/>
+  <text x="24" y="72" fill="#f4f4f5" font-family="Segoe UI, sans-serif" font-size="12" font-weight="600">▾ crates/git-widget-core/src/diff.rs</text>
+  <rect x="302" y="58" width="32" height="18" rx="9" fill="#132a1c" stroke="#22c55e"/>
+  <text x="310" y="71" fill="#86efac" font-family="Segoe UI, sans-serif" font-size="10">+14</text>
+  <rect x="338" y="58" width="28" height="18" rx="9" fill="#2c1518" stroke="#ef4444"/>
+  <text x="346" y="71" fill="#fca5a5" font-family="Segoe UI, sans-serif" font-size="10">-2</text>
+
+  <rect x="24" y="82" width="74" height="22" rx="5" fill="#132a1c" stroke="#22c55e"/>
+  <text x="34" y="97" fill="#86efac" font-family="Segoe UI, sans-serif" font-size="11">Accept file</text>
+  <rect x="104" y="82" width="72" height="22" rx="5" fill="#2c1518" stroke="#ef4444"/>
+  <text x="115" y="97" fill="#fca5a5" font-family="Segoe UI, sans-serif" font-size="11">Reject file</text>
+
+  <!-- Hunk Box -->
+  <rect x="24" y="112" width="372" height="144" rx="6" fill="#0d0d11" stroke="#27272f"/>
+  <rect x="24" y="112" width="372" height="26" rx="6" fill="#152033"/>
+  <text x="32" y="129" fill="#93c5fd" font-family="Consolas, monospace" font-size="11">@@ -71,4 +71,7 @@ fn parse_unified_diff</text>
+  <rect x="292" y="115" width="42" height="20" rx="4" fill="#22222a" stroke="#3b82f6"/>
+  <text x="298" y="129" fill="#bfdbfe" font-family="Segoe UI, sans-serif" font-size="10.5">💬 AI</text>
+  <rect x="338" y="115" width="24" height="20" rx="4" fill="#132a1c" stroke="#22c55e"/>
+  <text x="346" y="129" fill="#86efac" font-family="Segoe UI, sans-serif" font-size="11">✓</text>
+  <rect x="366" y="115" width="24" height="20" rx="4" fill="#2c1518" stroke="#ef4444"/>
+  <text x="374" y="129" fill="#fca5a5" font-family="Segoe UI, sans-serif" font-size="11">✕</text>
+
+  <text x="32" y="154" fill="#a1a1aa" font-family="Consolas, monospace" font-size="11"> fn parse_unified_diff(raw: &amp;str, staged: bool) {</text>
+  <rect x="25" y="162" width="370" height="18" fill="#2b1418"/>
+  <text x="32" y="175" fill="#fecaca" font-family="Consolas, monospace" font-size="11">-    let sections = raw.split("\ndiff --git ");</text>
+  <rect x="25" y="180" width="370" height="18" fill="#12291c"/>
+  <text x="32" y="193" fill="#bbf7d0" font-family="Consolas, monospace" font-size="11">+    let normalized = raw.replace("\r\n", "\n");</text>
+  <rect x="25" y="198" width="370" height="18" fill="#12291c"/>
+  <text x="32" y="211" fill="#bbf7d0" font-family="Consolas, monospace" font-size="11">+    let sections = normalized.split("\ndiff --git ");</text>
+  <text x="32" y="232" fill="#a1a1aa" font-family="Consolas, monospace" font-size="11">     for (idx, sec) in sections.enumerate() {</text>
+
+  <!-- Ask AI Card -->
+  <rect x="14" y="276" width="392" height="90" rx="8" fill="#18181d" stroke="#3b82f6"/>
+  <text x="24" y="295" fill="#f4f4f5" font-family="Segoe UI, sans-serif" font-size="11.5" font-weight="600">Ask AI about crates/git-widget-core/src/diff.rs</text>
+  <rect x="24" y="302" width="372" height="28" rx="5" fill="#111115" stroke="#2c2c35"/>
+  <text x="32" y="320" fill="#d4d4d8" font-family="Segoe UI, sans-serif" font-size="11">Is this safe for binary files in git diff?</text>
+  <rect x="24" y="336" width="372" height="22" rx="5" fill="#3b82f6"/>
+  <text x="165" y="351" fill="#ffffff" font-family="Segoe UI, sans-serif" font-size="11" font-weight="600">Send to AI Chat</text>
+</svg>

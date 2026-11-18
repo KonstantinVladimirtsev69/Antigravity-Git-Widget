@@ -4,7 +4,7 @@ import { BranchPanel } from './BranchPanel';
 import { ChangesPanel } from './ChangesPanel';
 import { DiffReview } from './DiffReview';
 import { GraphPanel } from './GraphPanel';
-import { DirtyModal, PreviewModal, SettingsPanel } from './Modals';
+import { DirtyModal, PreviewModal, RemoteModal, SettingsPanel } from './Modals';
 import { Picker } from './Picker';
 import { PrPanel } from './PrPanel';
 import { StashPanel } from './StashPanel';
@@ -52,8 +52,6 @@ export default function App() {
   const [selectedRemote, setSelectedRemote] = useState<string>('');
   const [focusFile, setFocusFile] = useState<string | null>(null);
   const [showRemoteForm, setShowRemoteForm] = useState(false);
-  const [remoteName, setRemoteName] = useState('origin');
-  const [remoteUrl, setRemoteUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -440,40 +438,26 @@ export default function App() {
       )}
 
       {showRemoteForm && selectedRepo && (
-        <div className="gw-card gw-stack">
-          <div className="gw-between">
-            <strong style={{ fontSize: 11.5 }}>Add Remote</strong>
-            <button className="gw-btn gw-btn-xs" onClick={() => setShowRemoteForm(false)}>
-              ✕
-            </button>
-          </div>
-          <div className="gw-row">
-            <input
-              className="gw-input"
-              style={{ width: 84 }}
-              value={remoteName}
-              onChange={(e) => setRemoteName(e.target.value)}
-              placeholder="origin"
-            />
-            <input
-              className="gw-input"
-              value={remoteUrl}
-              onChange={(e) => setRemoteUrl(e.target.value)}
-              placeholder="https://github.com/user/repo.git"
-            />
-          </div>
-          <button
-            className="gw-btn gw-btn-primary"
-            disabled={busy || !remoteName.trim() || !remoteUrl.trim()}
-            onClick={async () => {
-              await runSimple(() => api.addRemote(selectedRepo, remoteName, remoteUrl));
-              setRemoteUrl('');
-              setShowRemoteForm(false);
-            }}
-          >
-            Save Remote
-          </button>
-        </div>
+        <RemoteModal
+          defaultRepoName={
+            repos.find((r) => r.path.toLowerCase() === selectedRepo.toLowerCase())?.name ??
+            selectedRepo.split(/[\\/]/).pop() ??
+            'new-repo'
+          }
+          hasSavedToken={Boolean(config.github_token)}
+          busy={busy}
+          onClose={() => setShowRemoteForm(false)}
+          onAddExisting={async (name, url) => {
+            await runSimple(() => api.addRemote(selectedRepo, name, url));
+            setShowRemoteForm(false);
+          }}
+          onCreateGithub={async (payload) => {
+            await runSimple(() => api.createGithubRepo(selectedRepo, payload));
+            const res = await api.getRepos();
+            setConfig(res.config);
+            setShowRemoteForm(false);
+          }}
+        />
       )}
 
       {tab === 'diff' && selectedRepo && (

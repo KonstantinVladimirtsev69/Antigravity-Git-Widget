@@ -4,6 +4,7 @@ pub mod branches;
 pub mod diff;
 pub mod error;
 pub mod git_cli;
+pub mod github;
 pub mod graph;
 pub mod ops;
 pub mod safety;
