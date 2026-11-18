@@ -133,25 +133,46 @@ fn parse_porcelain_entry(line: &str) -> Option<FileChange> {
 }
 
 async fn list_branches(repo_path: &Path) -> Result<(Vec<String>, Vec<String>)> {
-    let out = run_git(
+    let local_out = run_git(
         repo_path,
-        &["branch", "-a", "--format=%(refname:short)"],
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            "refs/heads",
+        ],
         LOCAL_TIMEOUT_SECS,
     )
     .await?;
 
-    let mut local = Vec::new();
-    let mut remote = Vec::new();
-    for line in out.stdout.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        if line.ends_with("/HEAD") {
-            continue;
-        }
-        if line.contains('/') && line.starts_with("origin/") {
-            remote.push(line.to_string());
-        } else {
-            local.push(line.to_string());
-        }
-    }
+    let remote_out = run_git(
+        repo_path,
+        &[
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            "refs/remotes",
+        ],
+        LOCAL_TIMEOUT_SECS,
+    )
+    .await?;
+
+    let local: Vec<String> = local_out
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(ToString::to_string)
+        .collect();
+
+    let remote: Vec<String> = remote_out
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && l.contains('/') && !l.ends_with("/HEAD"))
+        .map(ToString::to_string)
+        .collect();
+
     Ok((local, remote))
 }
 

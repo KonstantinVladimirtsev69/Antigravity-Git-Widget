@@ -5,6 +5,7 @@ import { DirtyModal, PreviewModal, SettingsPanel } from './Modals';
 import { Picker } from './Picker';
 import type {
   ActionPreview,
+  CommitInfo,
   DiffFile,
   DirtyStrategy,
   GuardedOpKind,
@@ -30,7 +31,9 @@ export default function App() {
   const [autoMatched, setAutoMatched] = useState<boolean>(false);
   const [status, setStatus] = useState<RepoStatus | null>(null);
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
-  const [diffMode, setDiffMode] = useState<'working' | 'branch'>('working');
+  const [commits, setCommits] = useState<CommitInfo[]>([]);
+  const [selectedCommit, setSelectedCommit] = useState<string>('');
+  const [diffMode, setDiffMode] = useState<'working' | 'branch' | 'commit'>('working');
   const [mergeTarget, setMergeTarget] = useState<string>('');
   const [mergeDir, setMergeDir] = useState<'into_current' | 'current_into_target'>('current_into_target');
   const [commitMsg, setCommitMsg] = useState('');
@@ -56,14 +59,23 @@ export default function App() {
   } | null>(null);
 
   const refreshRepoData = useCallback(
-    async (repoPath: string, mode: 'working' | 'branch' = diffMode) => {
+    async (
+      repoPath: string,
+      mode: 'working' | 'branch' | 'commit' = diffMode,
+      commitHash: string = selectedCommit,
+    ) => {
       if (!repoPath) return;
       try {
-        const [st, df] = await Promise.all([
-          api.getStatus(repoPath),
-          api.getDiff(repoPath, mode),
-        ]);
+        const [st, cm] = await Promise.all([api.getStatus(repoPath), api.getCommits(repoPath)]);
+        const effectiveCommit = commitHash || cm[0]?.hash || '';
+        const df = await api.getDiff(
+          repoPath,
+          mode,
+          mode === 'commit' ? effectiveCommit : undefined,
+        );
         setStatus(st);
+        setCommits(cm);
+        if (!commitHash && cm[0]?.hash) setSelectedCommit(cm[0].hash);
         setDiffFiles(df);
         setSelectedRemote((prev) => {
           if (prev && st.remotes.includes(prev)) return prev;
@@ -80,7 +92,7 @@ export default function App() {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [diffMode],
+    [diffMode, selectedCommit],
   );
 
   useEffect(() => {
@@ -120,19 +132,41 @@ export default function App() {
 
   useEffect(() => {
     if (selectedRepo) {
-      void refreshRepoData(selectedRepo);
+      setNotice('');
+      setError('');
+      setSelectedCommit('');
+      void refreshRepoData(selectedRepo, diffMode, '');
     }
-  }, [selectedRepo, refreshRepoData]);
+  }, [selectedRepo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedRepo) return;
     const id = window.setInterval(() => {
       if (document.visibilityState === 'visible' && !busy && !dirtyPrompt && !protectedPrompt) {
-        void refreshRepoData(selectedRepo, diffMode);
+        void refreshRepoData(selectedRepo, diffMode, selectedCommit);
       }
     }, 3000);
     return () => window.clearInterval(id);
-  }, [selectedRepo, diffMode, busy, dirtyPrompt, protectedPrompt, refreshRepoData]);
+  }, [selectedRepo, diffMode, selectedCommit, busy, dirtyPrompt, protectedPrompt, refreshRepoData]);
+
+  // Silent background git fetch every 45s (and on repo switch) so Pull ↓N updates automatically.
+  useEffect(() => {
+    if (!selectedRepo || !status || status.remotes.length === 0) return;
+    const doSilentFetch = () => {
+      if (document.visibilityState === 'visible' && !busy) {
+        void api
+          .fetchAll(selectedRepo, selectedRemote || undefined)
+          .then(() => refreshRepoData(selectedRepo, diffMode, selectedCommit))
+          .catch(() => {});
+      }
+    };
+    const initial = window.setTimeout(doSilentFetch, 800);
+    const id = window.setInterval(doSilentFetch, 45000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(id);
+    };
+  }, [selectedRepo, selectedRemote]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const repoOptions = useMemo(
     () =>
@@ -438,14 +472,20 @@ export default function App() {
         <DiffReview
           repo={selectedRepo}
           files={diffFiles}
+          commits={commits}
+          selectedCommit={selectedCommit}
           mode={diffMode}
           focusFile={focusFile}
           busy={busy}
           onModeChange={(m) => {
             setDiffMode(m);
-            void refreshRepoData(selectedRepo, m);
+            void refreshRepoData(selectedRepo, m, selectedCommit);
           }}
-          onRefresh={() => refreshRepoData(selectedRepo, diffMode)}
+          onCommitSelect={(hash) => {
+            setSelectedCommit(hash);
+            void refreshRepoData(selectedRepo, 'commit', hash);
+          }}
+          onRefresh={() => refreshRepoData(selectedRepo, diffMode, selectedCommit)}
           onNotify={setNotice}
           onError={setError}
         />
@@ -682,7 +722,21 @@ export default function App() {
         </>
       )}
 
-      {notice && <div className="gw-card gw-muted">{notice}</div>}
+      {notice && (
+        <div className="gw-card gw-muted gw-between" style={{ alignItems: 'flex-start' }}>
+          <div style={{ maxHeight: 72, overflowY: 'auto', whiteSpace: 'pre-wrap', flex: 1 }}>
+            {notice}
+          </div>
+          <button
+            type="button"
+            className="gw-btn gw-btn-xs"
+            style={{ marginLeft: 6 }}
+            onClick={() => setNotice('')}
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {error && (
         <div className="gw-card" style={{ borderColor: 'rgba(239, 68, 68, 0.45)', color: '#fca5a5' }}>
           {error}

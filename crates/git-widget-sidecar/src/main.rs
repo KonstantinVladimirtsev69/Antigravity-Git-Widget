@@ -11,8 +11,8 @@ use axum::{
     Router,
 };
 use diff_routes::{
-    accept_hunk_handler, ask_ai_handler, diff_list_handler, discard_file_handler,
-    reject_hunk_handler, stage_file_handler, unstage_file_handler,
+    accept_hunk_handler, ask_ai_handler, commits_list_handler, diff_list_handler,
+    discard_file_handler, reject_hunk_handler, stage_file_handler, unstage_file_handler,
 };
 use routes::{
     abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, get_repos,
@@ -91,6 +91,7 @@ async fn main() {
             "/api/git/send-conflict-to-chat",
             post(send_conflict_to_chat_handler),
         )
+        .route("/api/commits", get(commits_list_handler))
         .route("/api/diff", get(diff_list_handler))
         .route("/api/diff/accept-hunk", post(accept_hunk_handler))
         .route("/api/diff/reject-hunk", post(reject_hunk_handler))

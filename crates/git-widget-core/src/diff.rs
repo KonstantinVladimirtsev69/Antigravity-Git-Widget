@@ -28,6 +28,15 @@ pub struct DiffFile {
     pub hunks: Vec<DiffHunk>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitInfo {
+    pub hash: String,
+    pub short_hash: String,
+    pub subject: String,
+    pub author: String,
+    pub date_rel: String,
+}
+
 /// Returns all changed files (staged, unstaged, untracked) with parsed hunks.
 pub async fn get_diff_files(repo_path: &Path) -> Result<Vec<DiffFile>> {
     let status = get_status(repo_path).await?;
@@ -89,6 +98,58 @@ pub async fn get_branch_diff_files(repo_path: &Path, base_branch: Option<&str>) 
     .await?;
     if !out.success {
         return Ok(Vec::new());
+    }
+    Ok(parse_unified_diff(&out.stdout, true))
+}
+
+/// Lists recent commits on current branch.
+pub async fn get_recent_commits(repo_path: &Path, limit: usize) -> Result<Vec<CommitInfo>> {
+    let n = format!("-n{limit}");
+    let out = run_git_raw(
+        repo_path,
+        &["log", &n, "--format=%H%x09%h%x09%s%x09%an%x09%cr"],
+        LOCAL_TIMEOUT_SECS,
+    )
+    .await?;
+    if !out.success {
+        return Ok(Vec::new());
+    }
+    let commits = out
+        .stdout
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(5, '\t').collect();
+            if parts.len() < 5 {
+                return None;
+            }
+            Some(CommitInfo {
+                hash: parts[0].to_string(),
+                short_hash: parts[1].to_string(),
+                subject: parts[2].to_string(),
+                author: parts[3].to_string(),
+                date_rel: parts[4].to_string(),
+            })
+        })
+        .collect();
+    Ok(commits)
+}
+
+/// Returns diff files for a specific commit hash.
+pub async fn get_commit_diff_files(repo_path: &Path, commit_hash: &str) -> Result<Vec<DiffFile>> {
+    if commit_hash.trim().is_empty() {
+        return Err(CoreError::InvalidInput("commit hash cannot be empty".to_string()));
+    }
+    let out = run_git_raw(
+        repo_path,
+        &["show", "--no-color", "--unified=3", "--format=", commit_hash.trim()],
+        LOCAL_TIMEOUT_SECS,
+    )
+    .await?;
+    if !out.success {
+        return Err(CoreError::GitFailed {
+            code: out.code,
+            stderr: out.stderr.trim().to_string(),
+        });
     }
     Ok(parse_unified_diff(&out.stdout, true))
 }

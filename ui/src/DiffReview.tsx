@@ -1,14 +1,18 @@
 import { useState } from 'react';
 import { CONVERSATION_ID, api } from './api';
-import type { DiffFile, DiffHunk } from './types';
+import { Picker } from './Picker';
+import type { CommitInfo, DiffFile, DiffHunk } from './types';
 
 interface DiffReviewProps {
   repo: string;
   files: DiffFile[];
-  mode: 'working' | 'branch';
+  commits: CommitInfo[];
+  selectedCommit: string;
+  mode: 'working' | 'branch' | 'commit';
   focusFile?: string | null;
   busy: boolean;
-  onModeChange: (mode: 'working' | 'branch') => void;
+  onModeChange: (mode: 'working' | 'branch' | 'commit') => void;
+  onCommitSelect: (hash: string) => void;
   onRefresh: () => Promise<void>;
   onNotify: (msg: string) => void;
   onError: (err: string) => void;
@@ -17,10 +21,13 @@ interface DiffReviewProps {
 export function DiffReview({
   repo,
   files,
+  commits,
+  selectedCommit,
   mode,
   focusFile,
   busy,
   onModeChange,
+  onCommitSelect,
   onRefresh,
   onNotify,
   onError,
@@ -79,21 +86,43 @@ export function DiffReview({
   };
 
   const modeBar = (
-    <div className="gw-tabs">
-      <button
-        type="button"
-        className={`gw-tab ${mode === 'working' ? 'active' : ''}`}
-        onClick={() => onModeChange('working')}
-      >
-        Working Tree
-      </button>
-      <button
-        type="button"
-        className={`gw-tab ${mode === 'branch' ? 'active' : ''}`}
-        onClick={() => onModeChange('branch')}
-      >
-        Branch Diff
-      </button>
+    <div className="gw-stack">
+      <div className="gw-tabs">
+        <button
+          type="button"
+          className={`gw-tab ${mode === 'working' ? 'active' : ''}`}
+          onClick={() => onModeChange('working')}
+        >
+          Working
+        </button>
+        <button
+          type="button"
+          className={`gw-tab ${mode === 'branch' ? 'active' : ''}`}
+          onClick={() => onModeChange('branch')}
+        >
+          Branch
+        </button>
+        <button
+          type="button"
+          className={`gw-tab ${mode === 'commit' ? 'active' : ''}`}
+          onClick={() => onModeChange('commit')}
+        >
+          Commits
+        </button>
+      </div>
+      {mode === 'commit' && (
+        <Picker
+          value={selectedCommit}
+          searchable
+          placeholder="Select commit..."
+          options={commits.map((c) => ({
+            value: c.hash,
+            label: `${c.short_hash} · ${c.subject}`,
+            sub: `${c.author} · ${c.date_rel}`,
+          }))}
+          onChange={onCommitSelect}
+        />
+      )}
     </div>
   );
 
@@ -103,8 +132,10 @@ export function DiffReview({
         {modeBar}
         <div className="gw-card gw-muted" style={{ textAlign: 'center', padding: 14 }}>
           {mode === 'working'
-            ? 'Working tree is clean. Switch to "Branch Diff" to inspect commits.'
-            : 'No diff against base branch.'}
+            ? 'Working tree is clean. Check "Branch" or "Commits".'
+            : mode === 'branch'
+              ? 'No diff against base branch.'
+              : 'Select a commit to inspect its diff.'}
         </div>
       </div>
     );

@@ -50,6 +50,14 @@ export interface DiffFile {
   hunks: DiffHunk[];
 }
 
+export interface CommitInfo {
+  hash: string;
+  short_hash: string;
+  subject: string;
+  author: string;
+  date_rel: string;
+}
+
 export interface OpResult {
   success: boolean;
   message: string;

@@ -1,5 +1,6 @@
 import type {
   ActionPreview,
+  CommitInfo,
   ConflictChatResponse,
   DiffFile,
   DirtyStrategy,
@@ -80,8 +81,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ repo, conversation_id: conversationId || null }),
     }),
-  getDiff: (repo: string, mode: 'working' | 'branch' = 'working') =>
-    request<DiffFile[]>(`./api/diff?repo=${encodeURIComponent(repo)}&mode=${mode}`),
+  getCommits: (repo: string) =>
+    request<CommitInfo[]>(`./api/commits?repo=${encodeURIComponent(repo)}`),
+  getDiff: (repo: string, mode: 'working' | 'branch' | 'commit' = 'working', commit?: string) =>
+    request<DiffFile[]>(
+      `./api/diff?repo=${encodeURIComponent(repo)}&mode=${mode}${commit ? `&commit=${encodeURIComponent(commit)}` : ''}`,
+    ),
   acceptHunk: (repo: string, file: string, hunkIndex: number) =>
     request<{ ok: boolean }>('./api/diff/accept-hunk', {
       method: 'POST',
