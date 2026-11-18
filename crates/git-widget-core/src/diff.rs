@@ -68,6 +68,31 @@ pub async fn get_diff_files(repo_path: &Path) -> Result<Vec<DiffFile>> {
     Ok(files)
 }
 
+/// Returns diff of all commits in current branch compared to a base branch (`main`/`master`/`developer`).
+pub async fn get_branch_diff_files(repo_path: &Path, base_branch: Option<&str>) -> Result<Vec<DiffFile>> {
+    let status = get_status(repo_path).await?;
+    let base = match base_branch {
+        Some(b) if !b.trim().is_empty() && b != status.branch => b.to_string(),
+        _ => ["main", "master", "developer"]
+            .into_iter()
+            .find(|b| *b != status.branch && status.local_branches.iter().any(|lb| lb == b))
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "HEAD~1".to_string()),
+    };
+
+    let range = format!("{base}...HEAD");
+    let out = run_git_raw(
+        repo_path,
+        &["diff", "--no-color", "--unified=3", &range],
+        LOCAL_TIMEOUT_SECS,
+    )
+    .await?;
+    if !out.success {
+        return Ok(Vec::new());
+    }
+    Ok(parse_unified_diff(&out.stdout, true))
+}
+
 fn parse_unified_diff(raw: &str, staged: bool) -> Vec<DiffFile> {
     let normalized = raw.replace("\r\n", "\n");
     let mut result = Vec::new();

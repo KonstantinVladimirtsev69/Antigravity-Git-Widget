@@ -1,16 +1,24 @@
 //! Diff Review and AI question routes for git-widget-sidecar.
 
-use crate::routes::{check_auth, map_err, send_agentapi_message, AppState, RepoQuery};
+use crate::routes::{check_auth, map_err, send_agentapi_message, AppState};
 use axum::{
     extract::{Query, State},
     http::HeaderMap,
     response::{IntoResponse, Json, Response},
 };
 use git_widget_core::diff::{
-    accept_hunk, discard_file, get_diff_files, reject_hunk, stage_file, unstage_file,
+    accept_hunk, discard_file, get_branch_diff_files, get_diff_files, reject_hunk, stage_file,
+    unstage_file,
 };
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
+
+#[derive(Deserialize)]
+pub struct DiffQuery {
+    pub repo: String,
+    pub mode: Option<String>,
+    pub base: Option<String>,
+}
 
 #[derive(Deserialize)]
 pub struct HunkActionBody {
@@ -44,12 +52,18 @@ pub struct AskAiResponse {
 pub async fn diff_list_handler(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
-    Query(q): Query<RepoQuery>,
+    Query(q): Query<DiffQuery>,
 ) -> Response {
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
-    match get_diff_files(Path::new(&q.repo)).await {
+    let repo = Path::new(&q.repo);
+    let res = if q.mode.as_deref() == Some("branch") {
+        get_branch_diff_files(repo, q.base.as_deref()).await
+    } else {
+        get_diff_files(repo).await
+    };
+    match res {
         Ok(files) => Json(files).into_response(),
         Err(e) => map_err(e),
     }

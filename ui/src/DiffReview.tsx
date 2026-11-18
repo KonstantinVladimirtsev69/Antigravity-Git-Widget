@@ -5,7 +5,9 @@ import type { DiffFile, DiffHunk } from './types';
 interface DiffReviewProps {
   repo: string;
   files: DiffFile[];
+  mode: 'working' | 'branch';
   busy: boolean;
+  onModeChange: (mode: 'working' | 'branch') => void;
   onRefresh: () => Promise<void>;
   onNotify: (msg: string) => void;
   onError: (err: string) => void;
@@ -14,7 +16,9 @@ interface DiffReviewProps {
 export function DiffReview({
   repo,
   files,
+  mode,
   busy,
+  onModeChange,
   onRefresh,
   onNotify,
   onError,
@@ -72,16 +76,41 @@ export function DiffReview({
     }
   };
 
+  const modeBar = (
+    <div className="gw-tabs">
+      <button
+        type="button"
+        className={`gw-tab ${mode === 'working' ? 'active' : ''}`}
+        onClick={() => onModeChange('working')}
+      >
+        Рабочие правки
+      </button>
+      <button
+        type="button"
+        className={`gw-tab ${mode === 'branch' ? 'active' : ''}`}
+        onClick={() => onModeChange('branch')}
+      >
+        Вся ветка (коммиты)
+      </button>
+    </div>
+  );
+
   if (files.length === 0) {
     return (
-      <div className="gw-card gw-muted" style={{ textAlign: 'center', padding: 16 }}>
-        Рабочее дерево чистое — нет изменений для ревью.
+      <div className="gw-stack">
+        {modeBar}
+        <div className="gw-card gw-muted" style={{ textAlign: 'center', padding: 16 }}>
+          {mode === 'working'
+            ? 'Рабочее дерево чистое — посмотри «Вся ветка (коммиты)» или сделай правки.'
+            : 'Нет отличий от базовой ветки.'}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="gw-stack">
+      {modeBar}
       {askTarget && (
         <div className="gw-card gw-stack" style={{ borderColor: 'var(--gw-accent)' }}>
           <div className="gw-between">
@@ -144,34 +173,36 @@ export function DiffReview({
               </div>
             </div>
 
-            <div className="gw-row">
-              {df.staged ? (
-                <button
-                  className="gw-btn gw-btn-xs"
-                  disabled={busy}
-                  onClick={() => void runAction(() => api.unstageFile(repo, df.path), 'Возвращено в Pending')}
-                >
-                  Unstage
-                </button>
-              ) : (
-                <>
+            {mode === 'working' && (
+              <div className="gw-row">
+                {df.staged ? (
                   <button
-                    className="gw-btn gw-btn-xs gw-btn-ok"
+                    className="gw-btn gw-btn-xs"
                     disabled={busy}
-                    onClick={() => void runAction(() => api.stageFile(repo, df.path), 'Файл принят (staged)')}
+                    onClick={() => void runAction(() => api.unstageFile(repo, df.path), 'Возвращено в Pending')}
                   >
-                    Accept file
+                    Unstage
                   </button>
-                  <button
-                    className="gw-btn gw-btn-xs gw-btn-danger"
-                    disabled={busy}
-                    onClick={() => void runAction(() => api.discardFile(repo, df.path), 'Изменения файла откачены')}
-                  >
-                    Reject file
-                  </button>
-                </>
-              )}
-            </div>
+                ) : (
+                  <>
+                    <button
+                      className="gw-btn gw-btn-xs gw-btn-ok"
+                      disabled={busy}
+                      onClick={() => void runAction(() => api.stageFile(repo, df.path), 'Файл принят (staged)')}
+                    >
+                      Accept file
+                    </button>
+                    <button
+                      className="gw-btn gw-btn-xs gw-btn-danger"
+                      disabled={busy}
+                      onClick={() => void runAction(() => api.discardFile(repo, df.path), 'Изменения файла откачены')}
+                    >
+                      Reject file
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
 
             {isOpen &&
               df.hunks.map((hunk) => (
@@ -188,7 +219,7 @@ export function DiffReview({
                       >
                         💬 ИИ
                       </button>
-                      {!df.staged && (
+                      {mode === 'working' && !df.staged && (
                         <>
                           <button
                             className="gw-btn gw-btn-xs gw-btn-ok"

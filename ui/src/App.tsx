@@ -30,6 +30,7 @@ export default function App() {
   const [autoMatched, setAutoMatched] = useState<boolean>(false);
   const [status, setStatus] = useState<RepoStatus | null>(null);
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
+  const [diffMode, setDiffMode] = useState<'working' | 'branch'>('working');
   const [mergeTarget, setMergeTarget] = useState<string>('');
   const [mergeDir, setMergeDir] = useState<'into_current' | 'current_into_target'>('current_into_target');
   const [commitMsg, setCommitMsg] = useState('');
@@ -49,22 +50,28 @@ export default function App() {
     preview: ActionPreview;
   } | null>(null);
 
-  const refreshRepoData = useCallback(async (repoPath: string) => {
-    if (!repoPath) return;
-    try {
-      const [st, df] = await Promise.all([api.getStatus(repoPath), api.getDiff(repoPath)]);
-      setStatus(st);
-      setDiffFiles(df);
-      setMergeTarget((prev) => {
-        if (prev && st.local_branches.includes(prev) && prev !== st.branch) return prev;
-        if (st.local_branches.includes('main') && st.branch !== 'main') return 'main';
-        if (st.local_branches.includes('developer') && st.branch !== 'developer') return 'developer';
-        return st.local_branches.find((b) => b !== st.branch) ?? '';
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
+  const refreshRepoData = useCallback(
+    async (repoPath: string, mode: 'working' | 'branch' = diffMode) => {
+      if (!repoPath) return;
+      try {
+        const [st, df] = await Promise.all([
+          api.getStatus(repoPath),
+          api.getDiff(repoPath, mode),
+        ]);
+        setStatus(st);
+        setDiffFiles(df);
+        setMergeTarget((prev) => {
+          if (prev && st.local_branches.includes(prev) && prev !== st.branch) return prev;
+          if (st.local_branches.includes('main') && st.branch !== 'main') return 'main';
+          if (st.local_branches.includes('developer') && st.branch !== 'developer') return 'developer';
+          return st.local_branches.find((b) => b !== st.branch) ?? '';
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [diffMode],
+  );
 
   useEffect(() => {
     void (async () => {
@@ -278,10 +285,9 @@ export default function App() {
         </button>
       </div>
 
-      {status && (
+      {status && (status.ahead > 0 || status.behind > 0 || status.is_dirty || status.is_merging || autoMatched) && (
         <div className="gw-between">
           <div className="gw-row" style={{ flexWrap: 'wrap' }}>
-            <span className="gw-badge gw-badge-ok">{status.branch}</span>
             {status.ahead > 0 && <span className="gw-badge gw-badge-ok">↑{status.ahead}</span>}
             {status.behind > 0 && <span className="gw-badge gw-badge-warn">↓{status.behind}</span>}
             {status.is_dirty && (
@@ -333,8 +339,13 @@ export default function App() {
         <DiffReview
           repo={selectedRepo}
           files={diffFiles}
+          mode={diffMode}
           busy={busy}
-          onRefresh={() => refreshRepoData(selectedRepo)}
+          onModeChange={(m) => {
+            setDiffMode(m);
+            void refreshRepoData(selectedRepo, m);
+          }}
+          onRefresh={() => refreshRepoData(selectedRepo, diffMode)}
           onNotify={setNotice}
           onError={setError}
         />
@@ -392,7 +403,7 @@ export default function App() {
             <div className="gw-row">
               <button
                 type="button"
-                className="gw-btn gw-btn-xs"
+                className="gw-btn"
                 title="Сменить направление merge"
                 onClick={() =>
                   setMergeDir((d) =>
@@ -400,7 +411,7 @@ export default function App() {
                   )
                 }
               >
-                {mergeDir === 'current_into_target' ? `${status.branch} →` : `← в ${status.branch}`}
+                {mergeDir === 'current_into_target' ? 'Влить →' : '← Взять'}
               </button>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <Picker

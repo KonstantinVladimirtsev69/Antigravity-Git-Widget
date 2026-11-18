@@ -47,7 +47,7 @@ export function Picker({
     : options;
 
   return (
-    <div className="gw-picker" ref={rootRef}>
+    <div className={`gw-picker ${open ? 'open' : ''}`} ref={rootRef}>
       <button
         type="button"
         className="gw-picker-btn"

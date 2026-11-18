@@ -72,7 +72,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ repo, conversation_id: conversationId || null }),
     }),
-  getDiff: (repo: string) => request<DiffFile[]>(`./api/diff?repo=${encodeURIComponent(repo)}`),
+  getDiff: (repo: string, mode: 'working' | 'branch' = 'working') =>
+    request<DiffFile[]>(`./api/diff?repo=${encodeURIComponent(repo)}&mode=${mode}`),
   acceptHunk: (repo: string, file: string, hunkIndex: number) =>
     request<{ ok: boolean }>('./api/diff/accept-hunk', {
       method: 'POST',
