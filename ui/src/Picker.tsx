@@ -18,7 +18,7 @@ interface PickerProps {
 export function Picker({
   value,
   options,
-  placeholder = 'Выбрать...',
+  placeholder = 'Select...',
   searchable = false,
   disabled = false,
   onChange,
@@ -69,13 +69,13 @@ export function Picker({
             <input
               className="gw-input"
               autoFocus
-              placeholder="Поиск..."
+              placeholder="Search..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           )}
           <div className="gw-picker-list">
-            {filtered.length === 0 && <div className="gw-muted" style={{ padding: 6 }}>Ничего не найдено</div>}
+            {filtered.length === 0 && <div className="gw-muted" style={{ padding: 6 }}>No matches</div>}
             {filtered.map((opt) => (
               <button
                 key={opt.value}

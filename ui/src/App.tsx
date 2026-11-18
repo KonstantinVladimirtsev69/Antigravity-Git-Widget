@@ -34,6 +34,9 @@ export default function App() {
   const [mergeTarget, setMergeTarget] = useState<string>('');
   const [mergeDir, setMergeDir] = useState<'into_current' | 'current_into_target'>('current_into_target');
   const [commitMsg, setCommitMsg] = useState('');
+  const [showRemoteForm, setShowRemoteForm] = useState(false);
+  const [remoteName, setRemoteName] = useState('origin');
+  const [remoteUrl, setRemoteUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -139,7 +142,7 @@ export default function App() {
         setDirtyPrompt({ kind, target, files: res.dirty_files });
       } else {
         setDirtyPrompt(null);
-        if (res.op_result) setNotice(res.op_result.message || `${kind} выполнен`);
+        if (res.op_result) setNotice(res.op_result.message || `${kind} completed`);
         await refreshRepoData(selectedRepo);
       }
     } catch (e) {
@@ -185,7 +188,7 @@ export default function App() {
             target: mergeTarget,
             is_protected: true,
             commit_count: 0,
-            commits: [`Ветка ${status.branch} будет влита в ${mergeTarget} (checkout ${mergeTarget} → merge ${status.branch})`],
+            commits: [`Checkout ${mergeTarget} and merge ${status.branch}`],
           },
         });
       } else {
@@ -211,7 +214,16 @@ export default function App() {
   };
 
   const handlePushClick = async () => {
-    if (!selectedRepo) return;
+    if (!selectedRepo || !status) return;
+    if (status.remotes.length === 0) {
+      setShowRemoteForm(true);
+      setError('No git remote configured. Add remote below.');
+      return;
+    }
+    if (!status.upstream) {
+      await runSimple(() => api.publish(selectedRepo, status.remotes[0]));
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -220,7 +232,7 @@ export default function App() {
         setProtectedPrompt({ action: 'push', preview });
       } else {
         const res = await api.push(selectedRepo);
-        setNotice(res.message || 'Push выполнен');
+        setNotice(res.message || 'Pushed');
         await refreshRepoData(selectedRepo);
       }
     } catch (e) {
@@ -236,7 +248,7 @@ export default function App() {
     setNotice('');
     try {
       const res = await fn();
-      setNotice(res.message || 'Готово');
+      setNotice(res.message || 'Done');
       await refreshRepoData(selectedRepo);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -252,10 +264,10 @@ export default function App() {
     try {
       const res = await api.sendConflictToChat(selectedRepo, CONVERSATION_ID);
       if (res.sent) {
-        setNotice('Контекст конфликта отправлен в открытый чат ИИ');
+        setNotice('Conflict context sent to AI chat');
       } else {
         await navigator.clipboard.writeText(res.prompt);
-        setNotice('Чат недоступен — промпт скопирован в буфер');
+        setNotice('Copied conflict prompt to clipboard');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -264,6 +276,9 @@ export default function App() {
     }
   };
 
+  const hasRemote = (status?.remotes.length ?? 0) > 0;
+  const isPublished = Boolean(status?.upstream);
+
   return (
     <div className="gw-stack">
       <div className="gw-row">
@@ -271,7 +286,7 @@ export default function App() {
           value={selectedRepo}
           options={repoOptions}
           searchable
-          placeholder="Выбрать репозиторий..."
+          placeholder="Select repository..."
           onChange={(val) => {
             setAutoMatched(false);
             setSelectedRepo(val);
@@ -285,19 +300,29 @@ export default function App() {
         </button>
       </div>
 
-      {status && (status.ahead > 0 || status.behind > 0 || status.is_dirty || status.is_merging || autoMatched) && (
-        <div className="gw-between">
-          <div className="gw-row" style={{ flexWrap: 'wrap' }}>
-            {status.ahead > 0 && <span className="gw-badge gw-badge-ok">↑{status.ahead}</span>}
-            {status.behind > 0 && <span className="gw-badge gw-badge-warn">↓{status.behind}</span>}
-            {status.is_dirty && (
-              <span className="gw-badge gw-badge-warn">dirty ({status.changes.length})</span>
-            )}
-            {status.is_merging && <span className="gw-badge gw-badge-danger">CONFLICT</span>}
+      {status &&
+        (status.ahead > 0 || status.behind > 0 || status.is_dirty || status.is_merging || autoMatched || !hasRemote) && (
+          <div className="gw-between">
+            <div className="gw-row" style={{ flexWrap: 'wrap' }}>
+              {status.ahead > 0 && <span className="gw-badge gw-badge-ok">↑{status.ahead}</span>}
+              {status.behind > 0 && <span className="gw-badge gw-badge-warn">↓{status.behind}</span>}
+              {status.is_dirty && (
+                <span className="gw-badge gw-badge-warn">dirty ({status.changes.length})</span>
+              )}
+              {status.is_merging && <span className="gw-badge gw-badge-danger">CONFLICT</span>}
+              {!hasRemote && (
+                <button
+                  type="button"
+                  className="gw-btn gw-btn-xs"
+                  onClick={() => setShowRemoteForm((v) => !v)}
+                >
+                  + Add Remote
+                </button>
+              )}
+            </div>
+            {autoMatched && <span className="gw-badge">Auto</span>}
           </div>
-          {autoMatched && <span className="gw-badge">Auto</span>}
-        </div>
-      )}
+        )}
 
       <div className="gw-tabs">
         <button
@@ -321,6 +346,13 @@ export default function App() {
           config={config}
           busy={busy}
           onClose={() => setShowSettings(false)}
+          onInitRepo={async (path) => {
+            await runSimple(() => api.initRepo(path));
+            const res = await api.getRepos();
+            setRepos(res.repos);
+            setSelectedRepo(path);
+            setShowSettings(false);
+          }}
           onSave={async (cfg) => {
             setBusy(true);
             try {
@@ -333,6 +365,43 @@ export default function App() {
             }
           }}
         />
+      )}
+
+      {showRemoteForm && selectedRepo && (
+        <div className="gw-card gw-stack">
+          <div className="gw-between">
+            <strong style={{ fontSize: 11.5 }}>Add Remote</strong>
+            <button className="gw-btn gw-btn-xs" onClick={() => setShowRemoteForm(false)}>
+              ✕
+            </button>
+          </div>
+          <div className="gw-row">
+            <input
+              className="gw-input"
+              style={{ width: 84 }}
+              value={remoteName}
+              onChange={(e) => setRemoteName(e.target.value)}
+              placeholder="origin"
+            />
+            <input
+              className="gw-input"
+              value={remoteUrl}
+              onChange={(e) => setRemoteUrl(e.target.value)}
+              placeholder="https://github.com/user/repo.git"
+            />
+          </div>
+          <button
+            className="gw-btn gw-btn-primary"
+            disabled={busy || !remoteName.trim() || !remoteUrl.trim()}
+            onClick={async () => {
+              await runSimple(() => api.addRemote(selectedRepo, remoteName, remoteUrl));
+              setRemoteUrl('');
+              setShowRemoteForm(false);
+            }}
+          >
+            Save Remote
+          </button>
+        </div>
       )}
 
       {tab === 'diff' && selectedRepo && (
@@ -354,30 +423,22 @@ export default function App() {
       {tab === 'flow' && status && (
         <>
           <div className="gw-card gw-stack">
-            <div className="gw-row">
-              <span className="gw-muted" style={{ minWidth: 68 }}>Ветка:</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Picker
-                  value={status.branch}
-                  options={status.local_branches.map((b) => ({
-                    value: b,
-                    label: b === status.branch ? `${b} (текущая)` : `Переключиться → ${b}`,
-                  }))}
-                  disabled={busy}
-                  onChange={(b) => {
-                    if (b !== status.branch) {
-                      void executeGuarded('checkout', b, { mode: 'fail_if_dirty' });
-                    }
-                  }}
-                />
-              </div>
-            </div>
+            <Picker
+              value={status.branch}
+              options={status.local_branches.map((b) => ({ value: b, label: b }))}
+              disabled={busy}
+              onChange={(b) => {
+                if (b !== status.branch) {
+                  void executeGuarded('checkout', b, { mode: 'fail_if_dirty' });
+                }
+              }}
+            />
 
             <div className="gw-row">
               <button
                 className="gw-btn"
                 style={{ flex: 1 }}
-                disabled={busy}
+                disabled={busy || !hasRemote}
                 onClick={() => void runSimple(() => api.fetchAll(selectedRepo))}
               >
                 Fetch
@@ -385,7 +446,7 @@ export default function App() {
               <button
                 className="gw-btn"
                 style={{ flex: 1 }}
-                disabled={busy}
+                disabled={busy || !hasRemote || !isPublished}
                 onClick={() => void executeGuarded('pull', null, { mode: 'fail_if_dirty' })}
               >
                 Pull
@@ -396,7 +457,7 @@ export default function App() {
                 disabled={busy}
                 onClick={() => void handlePushClick()}
               >
-                Push
+                {!hasRemote ? 'Set Remote' : isPublished ? 'Push' : 'Publish Branch'}
               </button>
             </div>
 
@@ -404,19 +465,19 @@ export default function App() {
               <button
                 type="button"
                 className="gw-btn"
-                title="Сменить направление merge"
+                title="Toggle merge direction"
                 onClick={() =>
                   setMergeDir((d) =>
                     d === 'current_into_target' ? 'into_current' : 'current_into_target',
                   )
                 }
               >
-                {mergeDir === 'current_into_target' ? 'Влить →' : '← Взять'}
+                {mergeDir === 'current_into_target' ? '→' : '←'}
               </button>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <Picker
                   value={mergeTarget}
-                  placeholder="Выбрать ветку..."
+                  placeholder="Target branch..."
                   options={status.local_branches
                     .filter((b) => b !== status.branch)
                     .map((b) => ({
@@ -482,8 +543,8 @@ export default function App() {
           )}
 
           {(status.is_merging || status.conflicts.length > 0) && (
-            <div className="gw-card gw-stack" style={{ borderColor: 'var(--gw-danger)' }}>
-              <strong style={{ color: '#fca5a5' }}>Merge-конфликт</strong>
+            <div className="gw-card gw-stack" style={{ borderColor: 'rgba(239, 68, 68, 0.45)' }}>
+              <strong style={{ color: '#fca5a5' }}>Merge Conflict</strong>
               <ul className="gw-list">
                 {status.conflicts.map((c) => (
                   <li key={c}>{c}</li>
@@ -495,14 +556,14 @@ export default function App() {
                   disabled={busy}
                   onClick={() => void sendConflict()}
                 >
-                  Передать ИИ в чат
+                  Send to AI Chat
                 </button>
                 <button
                   className="gw-btn gw-btn-danger"
                   disabled={busy}
                   onClick={() => void runSimple(() => api.abortMerge(selectedRepo))}
                 >
-                  Abort merge
+                  Abort Merge
                 </button>
               </div>
             </div>
@@ -512,7 +573,7 @@ export default function App() {
             <div className="gw-row">
               <input
                 className="gw-input"
-                placeholder="Быстрый commit (all)..."
+                placeholder="Quick commit (all)..."
                 value={commitMsg}
                 onChange={(e) => setCommitMsg(e.target.value)}
               />
@@ -550,7 +611,7 @@ export default function App() {
 
       {notice && <div className="gw-card gw-muted">{notice}</div>}
       {error && (
-        <div className="gw-card" style={{ borderColor: 'var(--gw-danger)', color: '#fca5a5' }}>
+        <div className="gw-card" style={{ borderColor: 'rgba(239, 68, 68, 0.45)', color: '#fca5a5' }}>
           {error}
         </div>
       )}

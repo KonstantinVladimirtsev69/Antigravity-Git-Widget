@@ -20,19 +20,19 @@ export function DirtyModal({
   onQuickCommit,
   onCancel,
 }: DirtyModalProps) {
-  const [msg, setMsg] = useState('wip: quick save before ' + kind);
+  const [msg, setMsg] = useState('wip: save before ' + kind);
 
   return (
-    <div className="gw-card" style={{ borderColor: 'var(--gw-warn)' }}>
+    <div className="gw-card" style={{ borderColor: 'rgba(245, 158, 11, 0.45)' }}>
       <div style={{ fontWeight: 600 }}>
-        Незакоммиченные изменения перед {kind}
+        Uncommitted changes before {kind}
         {target ? ` (${target})` : ''}
       </div>
       <ul className="gw-list">
         {files.slice(0, 8).map((f) => (
           <li key={f}>{f}</li>
         ))}
-        {files.length > 8 && <li>...и ещё {files.length - 8}</li>}
+        {files.length > 8 && <li>...and {files.length - 8} more</li>}
       </ul>
       <div className="gw-stack" style={{ marginTop: 8 }}>
         <button className="gw-btn gw-btn-primary" disabled={busy} onClick={onStashPop}>
@@ -54,7 +54,7 @@ export function DirtyModal({
           </button>
         </div>
         <button className="gw-btn" disabled={busy} onClick={onCancel}>
-          Отмена
+          Cancel
         </button>
       </div>
     </div>
@@ -77,12 +77,12 @@ export function PreviewModal({
   onCancel,
 }: PreviewModalProps) {
   return (
-    <div className="gw-card" style={{ borderColor: 'var(--gw-warn)' }}>
+    <div className="gw-card" style={{ borderColor: 'rgba(245, 158, 11, 0.45)' }}>
       <div style={{ fontWeight: 600 }}>
-        Подтверждение: {actionLabel} ({preview.source} → {preview.target})
+        Confirm {actionLabel}: {preview.source} → {preview.target}
       </div>
       <div className="gw-muted" style={{ marginTop: 2 }}>
-        Защищённая ветка · коммитов: {preview.commit_count}
+        Protected branch · commits: {preview.commit_count}
       </div>
       {preview.commits.length > 0 && (
         <ul className="gw-list">
@@ -93,10 +93,10 @@ export function PreviewModal({
       )}
       <div className="gw-row" style={{ marginTop: 8 }}>
         <button className="gw-btn gw-btn-primary" disabled={busy} onClick={onConfirm}>
-          Подтвердить {actionLabel}
+          Confirm {actionLabel}
         </button>
         <button className="gw-btn" disabled={busy} onClick={onCancel}>
-          Отмена
+          Cancel
         </button>
       </div>
     </div>
@@ -107,12 +107,20 @@ interface SettingsPanelProps {
   config: ScannerConfig;
   busy: boolean;
   onSave: (cfg: ScannerConfig) => void;
+  onInitRepo: (path: string) => void;
   onClose: () => void;
 }
 
-export function SettingsPanel({ config, busy, onSave, onClose }: SettingsPanelProps) {
+export function SettingsPanel({
+  config,
+  busy,
+  onSave,
+  onInitRepo,
+  onClose,
+}: SettingsPanelProps) {
   const [rootsText, setRootsText] = useState(config.roots.join('\n'));
   const [depth, setDepth] = useState(String(config.max_depth));
+  const [newRepoPath, setNewRepoPath] = useState('');
 
   const submit = () => {
     const roots = rootsText
@@ -125,18 +133,18 @@ export function SettingsPanel({ config, busy, onSave, onClose }: SettingsPanelPr
 
   return (
     <div className="gw-card gw-stack">
-      <div style={{ fontWeight: 600 }}>Папки сканирования</div>
+      <div style={{ fontWeight: 600 }}>Scanner Roots</div>
       <textarea
         className="gw-textarea"
-        rows={3}
+        rows={2}
         value={rootsText}
         onChange={(e) => setRootsText(e.target.value)}
       />
       <div className="gw-row">
-        <span className="gw-muted">Глубина:</span>
+        <span className="gw-muted">Depth:</span>
         <input
           className="gw-input"
-          style={{ width: 64 }}
+          style={{ width: 56 }}
           type="number"
           min={1}
           max={6}
@@ -144,11 +152,32 @@ export function SettingsPanel({ config, busy, onSave, onClose }: SettingsPanelPr
           onChange={(e) => setDepth(e.target.value)}
         />
         <button className="gw-btn gw-btn-primary" disabled={busy} onClick={submit}>
-          Сохранить
+          Save
         </button>
         <button className="gw-btn" onClick={onClose}>
-          Закрыть
+          Close
         </button>
+      </div>
+      <div style={{ borderTop: '1px solid var(--gw-border)', paddingTop: 6 }} className="gw-stack">
+        <span className="gw-muted">Init new Git repository:</span>
+        <div className="gw-row">
+          <input
+            className="gw-input"
+            placeholder="C:\Projects\my-new-app"
+            value={newRepoPath}
+            onChange={(e) => setNewRepoPath(e.target.value)}
+          />
+          <button
+            className="gw-btn"
+            disabled={busy || !newRepoPath.trim()}
+            onClick={() => {
+              onInitRepo(newRepoPath.trim());
+              setNewRepoPath('');
+            }}
+          >
+            Init
+          </button>
+        </div>
       </div>
     </div>
   );

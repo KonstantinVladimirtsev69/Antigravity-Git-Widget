@@ -55,6 +55,12 @@ export const api = {
     request<OpResult>('./api/git/fetch', { method: 'POST', body: JSON.stringify({ repo }) }),
   push: (repo: string) =>
     request<OpResult>('./api/git/push', { method: 'POST', body: JSON.stringify({ repo }) }),
+  publish: (repo: string, remote?: string) =>
+    request<OpResult>('./api/git/publish', { method: 'POST', body: JSON.stringify({ repo, remote }) }),
+  addRemote: (repo: string, name: string, url: string) =>
+    request<OpResult>('./api/git/add-remote', { method: 'POST', body: JSON.stringify({ repo, name, url }) }),
+  initRepo: (repo: string) =>
+    request<OpResult>('./api/git/init-repo', { method: 'POST', body: JSON.stringify({ repo }) }),
   commitAll: (repo: string, message: string) =>
     request<OpResult>('./api/git/commit', { method: 'POST', body: JSON.stringify({ repo, message }) }),
   stashSave: (repo: string, message?: string) =>

@@ -26,6 +26,7 @@ pub struct RepoStatus {
     pub conflicts: Vec<String>,
     pub local_branches: Vec<String>,
     pub remote_branches: Vec<String>,
+    pub remotes: Vec<String>,
 }
 
 /// Reads full status (`git status --porcelain=v2 --branch`) and branch list.
@@ -70,6 +71,7 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
     }
 
     let (local_branches, remote_branches) = list_branches(repo_path).await?;
+    let remotes = list_remotes(repo_path).await;
     let is_merging = is_merge_in_progress(repo_path).await;
     let is_dirty = !changes.is_empty();
 
@@ -84,6 +86,7 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
         conflicts,
         local_branches,
         remote_branches,
+        remotes,
     })
 }
 
@@ -150,6 +153,19 @@ async fn list_branches(repo_path: &Path) -> Result<(Vec<String>, Vec<String>)> {
         }
     }
     Ok((local, remote))
+}
+
+async fn list_remotes(repo_path: &Path) -> Vec<String> {
+    match run_git(repo_path, &["remote"], LOCAL_TIMEOUT_SECS).await {
+        Ok(out) => out
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 async fn is_merge_in_progress(repo_path: &Path) -> bool {

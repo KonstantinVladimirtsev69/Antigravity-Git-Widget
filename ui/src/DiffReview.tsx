@@ -62,10 +62,10 @@ export function DiffReview({
         CONVERSATION_ID,
       );
       if (res.sent) {
-        onNotify('Фрагмент и вопрос отправлены в чат ИИ');
+        onNotify('Diff snippet and question sent to AI chat');
       } else {
         await navigator.clipboard.writeText(res.prompt);
-        onNotify('Скопировано в буфер обмена (чат недоступен напрямую)');
+        onNotify('Copied to clipboard (direct chat send unavailable)');
       }
       setAskTarget(null);
       setQuestion('');
@@ -83,14 +83,14 @@ export function DiffReview({
         className={`gw-tab ${mode === 'working' ? 'active' : ''}`}
         onClick={() => onModeChange('working')}
       >
-        Рабочие правки
+        Working Tree
       </button>
       <button
         type="button"
         className={`gw-tab ${mode === 'branch' ? 'active' : ''}`}
         onClick={() => onModeChange('branch')}
       >
-        Вся ветка (коммиты)
+        Branch Diff
       </button>
     </div>
   );
@@ -99,10 +99,10 @@ export function DiffReview({
     return (
       <div className="gw-stack">
         {modeBar}
-        <div className="gw-card gw-muted" style={{ textAlign: 'center', padding: 16 }}>
+        <div className="gw-card gw-muted" style={{ textAlign: 'center', padding: 14 }}>
           {mode === 'working'
-            ? 'Рабочее дерево чистое — посмотри «Вся ветка (коммиты)» или сделай правки.'
-            : 'Нет отличий от базовой ветки.'}
+            ? 'Working tree is clean. Switch to "Branch Diff" to inspect commits.'
+            : 'No diff against base branch.'}
         </div>
       </div>
     );
@@ -112,9 +112,9 @@ export function DiffReview({
     <div className="gw-stack">
       {modeBar}
       {askTarget && (
-        <div className="gw-card gw-stack" style={{ borderColor: 'var(--gw-accent)' }}>
+        <div className="gw-card gw-stack" style={{ borderColor: 'rgba(59, 130, 246, 0.45)' }}>
           <div className="gw-between">
-            <strong style={{ fontSize: 11.5 }}>Вопрос ИИ по {askTarget.file}</strong>
+            <strong style={{ fontSize: 11.5 }}>Ask AI about {askTarget.file}</strong>
             <button className="gw-btn gw-btn-xs" onClick={() => setAskTarget(null)}>
               ✕
             </button>
@@ -128,7 +128,7 @@ export function DiffReview({
           <textarea
             className="gw-textarea"
             rows={2}
-            placeholder="Комментарий или вопрос по этому куску..."
+            placeholder="Comment or question about this snippet..."
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
           />
@@ -137,7 +137,7 @@ export function DiffReview({
             disabled={sending || !question.trim()}
             onClick={() => void sendAsk()}
           >
-            {sending ? 'Отправка...' : 'Отправить в чат ИИ'}
+            {sending ? 'Sending...' : 'Send to AI Chat'}
           </button>
         </div>
       )}
@@ -168,7 +168,7 @@ export function DiffReview({
                 <span className="gw-badge gw-badge-ok">+{df.additions}</span>
                 {df.deletions > 0 && <span className="gw-badge gw-badge-danger">-{df.deletions}</span>}
                 <span className={`gw-badge ${df.staged ? 'gw-badge-ok' : 'gw-badge-warn'}`}>
-                  {df.staged ? 'Accepted' : df.status}
+                  {df.staged ? 'Staged' : df.status}
                 </span>
               </div>
             </div>
@@ -179,7 +179,7 @@ export function DiffReview({
                   <button
                     className="gw-btn gw-btn-xs"
                     disabled={busy}
-                    onClick={() => void runAction(() => api.unstageFile(repo, df.path), 'Возвращено в Pending')}
+                    onClick={() => void runAction(() => api.unstageFile(repo, df.path), 'Unstaged')}
                   >
                     Unstage
                   </button>
@@ -188,14 +188,14 @@ export function DiffReview({
                     <button
                       className="gw-btn gw-btn-xs gw-btn-ok"
                       disabled={busy}
-                      onClick={() => void runAction(() => api.stageFile(repo, df.path), 'Файл принят (staged)')}
+                      onClick={() => void runAction(() => api.stageFile(repo, df.path), 'Accepted (staged)')}
                     >
                       Accept file
                     </button>
                     <button
                       className="gw-btn gw-btn-xs gw-btn-danger"
                       disabled={busy}
-                      onClick={() => void runAction(() => api.discardFile(repo, df.path), 'Изменения файла откачены')}
+                      onClick={() => void runAction(() => api.discardFile(repo, df.path), 'Reverted file')}
                     >
                       Reject file
                     </button>
@@ -214,10 +214,10 @@ export function DiffReview({
                     <div className="gw-row">
                       <button
                         className="gw-btn gw-btn-xs"
-                        title="Выделите строки выше или нажмите для отправки всего hunk в чат"
+                        title="Select lines or click to ask AI about this hunk"
                         onClick={() => openAskForHunk(df.path, hunk)}
                       >
-                        💬 ИИ
+                        💬 AI
                       </button>
                       {mode === 'working' && !df.staged && (
                         <>
@@ -227,7 +227,7 @@ export function DiffReview({
                             onClick={() =>
                               void runAction(
                                 () => api.acceptHunk(repo, df.path, hunk.index),
-                                'Hunk принят',
+                                'Hunk accepted',
                               )
                             }
                           >
@@ -239,7 +239,7 @@ export function DiffReview({
                             onClick={() =>
                               void runAction(
                                 () => api.rejectHunk(repo, df.path, hunk.index),
-                                'Hunk откачен',
+                                'Hunk rejected',
                               )
                             }
                           >

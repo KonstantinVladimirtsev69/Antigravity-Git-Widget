@@ -7,7 +7,10 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use git_widget_core::{
-    ops::{commit_all, fetch_all, push_current, stash_pop, stash_save},
+    ops::{
+        add_remote, commit_all, fetch_all, init_repo, publish_branch, push_current, stash_pop,
+        stash_save,
+    },
     safety::{
         abort_merge, build_conflict_prompt, preview_merge, preview_push, run_with_dirty_guard,
         DirtyStrategy, GuardedOpKind,
@@ -277,6 +280,61 @@ pub async fn fetch_handler(
         return r;
     }
     match fetch_all(Path::new(&b.repo)).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AddRemoteBody {
+    pub repo: String,
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Deserialize)]
+pub struct PublishBody {
+    pub repo: String,
+    pub remote: Option<String>,
+}
+
+pub async fn publish_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<PublishBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match publish_branch(Path::new(&b.repo), b.remote.as_deref()).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn add_remote_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<AddRemoteBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match add_remote(Path::new(&b.repo), &b.name, &b.url).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn init_repo_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<RepoBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match init_repo(Path::new(&b.repo)).await {
         Ok(r) => Json(r).into_response(),
         Err(e) => map_err(e),
     }

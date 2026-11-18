@@ -15,9 +15,11 @@ use diff_routes::{
     reject_hunk_handler, stage_file_handler, unstage_file_handler,
 };
 use routes::{
-    abort_merge_handler, commit_handler, fetch_handler, get_repos, guarded_handler, init_config,
-    post_config, preview_merge_handler, preview_push_handler, push_handler, resolve_workspace,
-    send_conflict_to_chat_handler, stash_pop_handler, stash_save_handler, status_handler, AppState,
+    abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, get_repos,
+    guarded_handler, init_config, init_repo_handler, post_config, preview_merge_handler,
+    preview_push_handler, publish_handler, push_handler, resolve_workspace,
+    send_conflict_to_chat_handler, stash_pop_handler, stash_save_handler, status_handler,
+    AppState,
 };
 use rust_embed::Embed;
 use std::{net::SocketAddr, sync::Arc};
@@ -75,6 +77,9 @@ async fn main() {
         .route("/api/git/guarded", post(guarded_handler))
         .route("/api/git/fetch", post(fetch_handler))
         .route("/api/git/push", post(push_handler))
+        .route("/api/git/publish", post(publish_handler))
+        .route("/api/git/add-remote", post(add_remote_handler))
+        .route("/api/git/init-repo", post(init_repo_handler))
         .route("/api/git/commit", post(commit_handler))
         .route("/api/git/stash-save", post(stash_save_handler))
         .route("/api/git/stash-pop", post(stash_pop_handler))

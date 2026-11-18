@@ -31,6 +31,7 @@ export interface RepoStatus {
   conflicts: string[];
   local_branches: string[];
   remote_branches: string[];
+  remotes: string[];
 }
 
 export interface DiffHunk {
