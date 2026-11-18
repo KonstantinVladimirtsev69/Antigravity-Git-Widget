@@ -51,10 +51,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ repo, kind, target, strategy }),
     }),
-  fetchAll: (repo: string) =>
-    request<OpResult>('./api/git/fetch', { method: 'POST', body: JSON.stringify({ repo }) }),
-  push: (repo: string) =>
-    request<OpResult>('./api/git/push', { method: 'POST', body: JSON.stringify({ repo }) }),
+  fetchAll: (repo: string, remote?: string) =>
+    request<OpResult>('./api/git/fetch', { method: 'POST', body: JSON.stringify({ repo, remote }) }),
+  pull: (repo: string, remote?: string) =>
+    request<OpResult>('./api/git/pull', { method: 'POST', body: JSON.stringify({ repo, remote }) }),
+  push: (repo: string, remote?: string) =>
+    request<OpResult>('./api/git/push', { method: 'POST', body: JSON.stringify({ repo, remote }) }),
   publish: (repo: string, remote?: string) =>
     request<OpResult>('./api/git/publish', { method: 'POST', body: JSON.stringify({ repo, remote }) }),
   addRemote: (repo: string, name: string, url: string) =>

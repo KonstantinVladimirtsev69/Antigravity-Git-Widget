@@ -8,8 +8,8 @@ use axum::{
 };
 use git_widget_core::{
     ops::{
-        add_remote, commit_all, fetch_all, init_repo, publish_branch, push_current, stash_pop,
-        stash_save,
+        add_remote, commit_all, fetch_remote, init_repo, publish_branch, pull_remote, push_remote,
+        stash_pop, stash_save,
     },
     safety::{
         abort_merge, build_conflict_prompt, preview_merge, preview_push, run_with_dirty_guard,
@@ -49,6 +49,7 @@ pub struct RepoQuery {
 #[derive(Deserialize)]
 pub struct RepoBody {
     pub repo: String,
+    pub remote: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -279,7 +280,21 @@ pub async fn fetch_handler(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
-    match fetch_all(Path::new(&b.repo)).await {
+    match fetch_remote(Path::new(&b.repo), b.remote.as_deref()).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => map_err(e),
+    }
+}
+
+pub async fn pull_handler(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<RepoBody>,
+) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    match pull_remote(Path::new(&b.repo), b.remote.as_deref()).await {
         Ok(r) => Json(r).into_response(),
         Err(e) => map_err(e),
     }
@@ -348,7 +363,7 @@ pub async fn push_handler(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
-    match push_current(Path::new(&b.repo)).await {
+    match push_remote(Path::new(&b.repo), b.remote.as_deref()).await {
         Ok(r) => Json(r).into_response(),
         Err(e) => map_err(e),
     }

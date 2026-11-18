@@ -17,7 +17,7 @@ use diff_routes::{
 use routes::{
     abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, get_repos,
     guarded_handler, init_config, init_repo_handler, post_config, preview_merge_handler,
-    preview_push_handler, publish_handler, push_handler, resolve_workspace,
+    preview_push_handler, publish_handler, pull_handler, push_handler, resolve_workspace,
     send_conflict_to_chat_handler, stash_pop_handler, stash_save_handler, status_handler,
     AppState,
 };
@@ -76,6 +76,7 @@ async fn main() {
         .route("/api/status", get(status_handler))
         .route("/api/git/guarded", post(guarded_handler))
         .route("/api/git/fetch", post(fetch_handler))
+        .route("/api/git/pull", post(pull_handler))
         .route("/api/git/push", post(push_handler))
         .route("/api/git/publish", post(publish_handler))
         .route("/api/git/add-remote", post(add_remote_handler))

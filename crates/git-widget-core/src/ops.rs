@@ -32,13 +32,12 @@ pub async fn checkout_branch(repo_path: &Path, branch: &str) -> Result<OpResult>
     })
 }
 
-pub async fn fetch_all(repo_path: &Path) -> Result<OpResult> {
-    let out = run_git(
-        repo_path,
-        &["fetch", "--all", "--prune"],
-        NETWORK_TIMEOUT_SECS,
-    )
-    .await?;
+pub async fn fetch_remote(repo_path: &Path, remote: Option<&str>) -> Result<OpResult> {
+    let args: Vec<&str> = match remote.filter(|r| !r.trim().is_empty()) {
+        Some(r) => vec!["fetch", r, "--prune"],
+        None => vec!["fetch", "--all", "--prune"],
+    };
+    let out = run_git(repo_path, &args, NETWORK_TIMEOUT_SECS).await?;
     Ok(OpResult {
         success: true,
         message: out.stdout.trim().to_string(),
@@ -46,19 +45,30 @@ pub async fn fetch_all(repo_path: &Path) -> Result<OpResult> {
     })
 }
 
-pub async fn pull_current(repo_path: &Path) -> Result<OpResult> {
+pub async fn fetch_all(repo_path: &Path) -> Result<OpResult> {
+    fetch_remote(repo_path, None).await
+}
+
+pub async fn pull_remote(repo_path: &Path, remote: Option<&str>) -> Result<OpResult> {
     let st_before = get_status(repo_path).await?;
     if st_before.remotes.is_empty() {
         return Err(CoreError::InvalidInput(
             "No git remote configured. Add a remote first.".to_string(),
         ));
     }
-    if st_before.upstream.is_none() {
-        return Err(CoreError::InvalidInput(
-            "Branch has no upstream. Publish branch first.".to_string(),
-        ));
-    }
-    let out = run_git_raw(repo_path, &["pull"], NETWORK_TIMEOUT_SECS).await?;
+    let out = match remote.filter(|r| !r.trim().is_empty()) {
+        Some(r) => {
+            run_git_raw(repo_path, &["pull", r, &st_before.branch], NETWORK_TIMEOUT_SECS).await?
+        }
+        None => {
+            if st_before.upstream.is_none() {
+                return Err(CoreError::InvalidInput(
+                    "Branch has no upstream. Publish branch first.".to_string(),
+                ));
+            }
+            run_git_raw(repo_path, &["pull"], NETWORK_TIMEOUT_SECS).await?
+        }
+    };
     if out.success {
         return Ok(OpResult {
             success: true,
@@ -78,6 +88,10 @@ pub async fn pull_current(repo_path: &Path) -> Result<OpResult> {
         code: out.code,
         stderr: out.stderr.trim().to_string(),
     })
+}
+
+pub async fn pull_current(repo_path: &Path) -> Result<OpResult> {
+    pull_remote(repo_path, None).await
 }
 
 pub async fn merge_branch(repo_path: &Path, source_branch: &str) -> Result<OpResult> {
@@ -104,12 +118,20 @@ pub async fn merge_branch(repo_path: &Path, source_branch: &str) -> Result<OpRes
     })
 }
 
-pub async fn push_current(repo_path: &Path) -> Result<OpResult> {
+pub async fn push_remote(repo_path: &Path, remote: Option<&str>) -> Result<OpResult> {
     let st = get_status(repo_path).await?;
     if st.remotes.is_empty() {
         return Err(CoreError::InvalidInput(
             "No git remote configured. Add a remote first.".to_string(),
         ));
+    }
+    if let Some(r) = remote.filter(|r| !r.trim().is_empty()) {
+        let out = run_git(repo_path, &["push", "-u", r, &st.branch], NETWORK_TIMEOUT_SECS).await?;
+        return Ok(OpResult {
+            success: true,
+            message: out.stderr.trim().to_string(),
+            has_conflicts: false,
+        });
     }
     if st.upstream.is_none() {
         return publish_branch(repo_path, None).await;
@@ -120,6 +142,10 @@ pub async fn push_current(repo_path: &Path) -> Result<OpResult> {
         message: out.stderr.trim().to_string(),
         has_conflicts: false,
     })
+}
+
+pub async fn push_current(repo_path: &Path) -> Result<OpResult> {
+    push_remote(repo_path, None).await
 }
 
 pub async fn publish_branch(repo_path: &Path, remote: Option<&str>) -> Result<OpResult> {

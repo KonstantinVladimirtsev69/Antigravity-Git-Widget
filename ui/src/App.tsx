@@ -34,6 +34,8 @@ export default function App() {
   const [mergeTarget, setMergeTarget] = useState<string>('');
   const [mergeDir, setMergeDir] = useState<'into_current' | 'current_into_target'>('current_into_target');
   const [commitMsg, setCommitMsg] = useState('');
+  const [selectedRemote, setSelectedRemote] = useState<string>('');
+  const [focusFile, setFocusFile] = useState<string | null>(null);
   const [showRemoteForm, setShowRemoteForm] = useState(false);
   const [remoteName, setRemoteName] = useState('origin');
   const [remoteUrl, setRemoteUrl] = useState('');
@@ -63,6 +65,11 @@ export default function App() {
         ]);
         setStatus(st);
         setDiffFiles(df);
+        setSelectedRemote((prev) => {
+          if (prev && st.remotes.includes(prev)) return prev;
+          if (st.remotes.includes('origin')) return 'origin';
+          return st.remotes[0] ?? '';
+        });
         setMergeTarget((prev) => {
           if (prev && st.local_branches.includes(prev) && prev !== st.branch) return prev;
           if (st.local_branches.includes('main') && st.branch !== 'main') return 'main';
@@ -221,7 +228,7 @@ export default function App() {
       return;
     }
     if (!status.upstream) {
-      await runSimple(() => api.publish(selectedRepo, status.remotes[0]));
+      await runSimple(() => api.publish(selectedRepo, selectedRemote || status.remotes[0]));
       return;
     }
     setBusy(true);
@@ -231,7 +238,7 @@ export default function App() {
       if (preview.is_protected) {
         setProtectedPrompt({ action: 'push', preview });
       } else {
-        const res = await api.push(selectedRepo);
+        const res = await api.push(selectedRepo, selectedRemote || undefined);
         setNotice(res.message || 'Pushed');
         await refreshRepoData(selectedRepo);
       }
@@ -409,6 +416,7 @@ export default function App() {
           repo={selectedRepo}
           files={diffFiles}
           mode={diffMode}
+          focusFile={focusFile}
           busy={busy}
           onModeChange={(m) => {
             setDiffMode(m);
@@ -435,19 +443,45 @@ export default function App() {
             />
 
             <div className="gw-row">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Picker
+                  value={selectedRemote}
+                  placeholder="No remote..."
+                  options={status.remotes.map((r) => ({ value: r, label: `remote: ${r}` }))}
+                  disabled={busy || status.remotes.length === 0}
+                  onChange={setSelectedRemote}
+                />
+              </div>
+              <button
+                type="button"
+                className="gw-btn"
+                title="Add remote"
+                onClick={() => setShowRemoteForm((v) => !v)}
+              >
+                +
+              </button>
+            </div>
+
+            <div className="gw-row">
               <button
                 className="gw-btn"
                 style={{ flex: 1 }}
                 disabled={busy || !hasRemote}
-                onClick={() => void runSimple(() => api.fetchAll(selectedRepo))}
+                onClick={() =>
+                  void runSimple(() => api.fetchAll(selectedRepo, selectedRemote || undefined))
+                }
               >
                 Fetch
               </button>
               <button
                 className="gw-btn"
                 style={{ flex: 1 }}
-                disabled={busy || !hasRemote || !isPublished}
-                onClick={() => void executeGuarded('pull', null, { mode: 'fail_if_dirty' })}
+                disabled={busy || !hasRemote}
+                onClick={() =>
+                  selectedRemote
+                    ? void runSimple(() => api.pull(selectedRepo, selectedRemote))
+                    : void executeGuarded('pull', null, { mode: 'fail_if_dirty' })
+                }
               >
                 Pull
               </button>
@@ -535,7 +569,7 @@ export default function App() {
                     await executeGuarded('merge', mergeTarget, { mode: 'fail_if_dirty' });
                   }
                 } else {
-                  await runSimple(() => api.push(selectedRepo));
+                  await runSimple(() => api.push(selectedRepo, selectedRemote || undefined));
                 }
               }}
               onCancel={() => setProtectedPrompt(null)}
@@ -570,6 +604,36 @@ export default function App() {
           )}
 
           <div className="gw-card gw-stack">
+            {status.changes.length > 0 && (
+              <div className="gw-stack" style={{ gap: 2, maxHeight: 110, overflowY: 'auto' }}>
+                {status.changes.map((c) => (
+                  <button
+                    key={`${c.code}:${c.path}`}
+                    type="button"
+                    className="gw-picker-item gw-between"
+                    style={{ padding: '3px 5px' }}
+                    onClick={() => {
+                      setDiffMode('working');
+                      setFocusFile(c.path);
+                      setTab('diff');
+                    }}
+                  >
+                    <span
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {c.path}
+                    </span>
+                    <span className="gw-badge" style={{ marginLeft: 6 }}>
+                      {c.code}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="gw-row">
               <input
                 className="gw-input"

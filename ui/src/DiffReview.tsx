@@ -6,6 +6,7 @@ interface DiffReviewProps {
   repo: string;
   files: DiffFile[];
   mode: 'working' | 'branch';
+  focusFile?: string | null;
   busy: boolean;
   onModeChange: (mode: 'working' | 'branch') => void;
   onRefresh: () => Promise<void>;
@@ -17,6 +18,7 @@ export function DiffReview({
   repo,
   files,
   mode,
+  focusFile,
   busy,
   onModeChange,
   onRefresh,
@@ -144,10 +146,18 @@ export function DiffReview({
 
       {files.map((df) => {
         const key = `${df.staged ? 'S' : 'U'}:${df.path}`;
-        const isOpen = expanded[key] ?? true;
+        const isFocused = focusFile === df.path;
+        const isOpen = isFocused ? true : (expanded[key] ?? true);
 
         return (
-          <div key={key} className="gw-card gw-stack" style={{ padding: 7 }}>
+          <div
+            key={key}
+            className="gw-card gw-stack"
+            style={{
+              padding: 7,
+              borderColor: isFocused ? 'rgba(59, 130, 246, 0.5)' : undefined,
+            }}
+          >
             <div className="gw-between">
               <button
                 type="button"
