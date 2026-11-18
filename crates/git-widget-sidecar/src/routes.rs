@@ -8,8 +8,8 @@ use axum::{
 };
 use git_widget_core::{
     ops::{
-        add_remote, commit_all, fetch_remote, init_repo, publish_branch, pull_remote, push_remote,
-        stash_pop, stash_save,
+        add_remote, commit_smart, fetch_remote, init_repo, publish_branch, pull_remote,
+        push_remote, stash_pop, stash_save,
     },
     safety::{
         abort_merge, build_conflict_prompt, preview_merge, preview_push, run_with_dirty_guard,
@@ -56,6 +56,8 @@ pub struct RepoBody {
 pub struct CommitBody {
     pub repo: String,
     pub message: String,
+    #[serde(default)]
+    pub amend: bool,
 }
 
 #[derive(Deserialize)]
@@ -377,7 +379,7 @@ pub async fn commit_handler(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
-    match commit_all(Path::new(&b.repo), &b.message).await {
+    match commit_smart(Path::new(&b.repo), &b.message, b.amend).await {
         Ok(r) => Json(r).into_response(),
         Err(e) => map_err(e),
     }

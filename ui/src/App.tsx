@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CONVERSATION_ID, api } from './api';
+import { BranchPanel } from './BranchPanel';
+import { ChangesPanel } from './ChangesPanel';
 import { DiffReview } from './DiffReview';
 import { DirtyModal, PreviewModal, SettingsPanel } from './Modals';
 import { Picker } from './Picker';
+import { StashPanel } from './StashPanel';
 import type {
   ActionPreview,
   CommitInfo,
@@ -12,6 +15,7 @@ import type {
   RepoInfo,
   RepoStatus,
   ScannerConfig,
+  StashEntry,
 } from './types';
 
 declare global {
@@ -32,11 +36,11 @@ export default function App() {
   const [status, setStatus] = useState<RepoStatus | null>(null);
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
   const [commits, setCommits] = useState<CommitInfo[]>([]);
+  const [stashes, setStashes] = useState<StashEntry[]>([]);
   const [selectedCommit, setSelectedCommit] = useState<string>('');
   const [diffMode, setDiffMode] = useState<'working' | 'branch' | 'commit'>('working');
   const [mergeTarget, setMergeTarget] = useState<string>('');
   const [mergeDir, setMergeDir] = useState<'into_current' | 'current_into_target'>('current_into_target');
-  const [commitMsg, setCommitMsg] = useState('');
   const [selectedRemote, setSelectedRemote] = useState<string>('');
   const [focusFile, setFocusFile] = useState<string | null>(null);
   const [showRemoteForm, setShowRemoteForm] = useState(false);
@@ -66,7 +70,11 @@ export default function App() {
     ) => {
       if (!repoPath) return;
       try {
-        const [st, cm] = await Promise.all([api.getStatus(repoPath), api.getCommits(repoPath)]);
+        const [st, cm, sl] = await Promise.all([
+          api.getStatus(repoPath),
+          api.getCommits(repoPath),
+          api.listStashes(repoPath),
+        ]);
         const effectiveCommit = commitHash || cm[0]?.hash || '';
         const df = await api.getDiff(
           repoPath,
@@ -75,6 +83,7 @@ export default function App() {
         );
         setStatus(st);
         setCommits(cm);
+        setStashes(sl);
         if (!commitHash && cm[0]?.hash) setSelectedCommit(cm[0].hash);
         setDiffFiles(df);
         setSelectedRemote((prev) => {
@@ -149,7 +158,6 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [selectedRepo, diffMode, selectedCommit, busy, dirtyPrompt, protectedPrompt, refreshRepoData]);
 
-  // Silent background git fetch every 45s (and on repo switch) so Pull ↓N updates automatically.
   useEffect(() => {
     if (!selectedRepo || !status || status.remotes.length === 0) return;
     const doSilentFetch = () => {
@@ -177,6 +185,21 @@ export default function App() {
       })),
     [repos],
   );
+
+  const runSimple = async (fn: () => Promise<{ message?: string }>, fallback = 'Done') => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const res = await fn();
+      setNotice(res.message || fallback);
+      await refreshRepoData(selectedRepo);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const executeGuarded = async (
     kind: GuardedOpKind,
@@ -230,8 +253,7 @@ export default function App() {
   const handleMergeClick = async () => {
     if (!selectedRepo || !mergeTarget || !status) return;
     if (mergeDir === 'current_into_target') {
-      const isProtected = mergeTarget === 'main' || mergeTarget === 'master';
-      if (isProtected) {
+      if (mergeTarget === 'main' || mergeTarget === 'master') {
         setProtectedPrompt({
           action: 'merge',
           preview: {
@@ -247,16 +269,12 @@ export default function App() {
       }
       return;
     }
-
     setBusy(true);
     setError('');
     try {
       const preview = await api.previewMerge(selectedRepo, mergeTarget);
-      if (preview.is_protected) {
-        setProtectedPrompt({ action: 'merge', preview });
-      } else {
-        await executeGuarded('merge', mergeTarget, { mode: 'fail_if_dirty' });
-      }
+      if (preview.is_protected) setProtectedPrompt({ action: 'merge', preview });
+      else await executeGuarded('merge', mergeTarget, { mode: 'fail_if_dirty' });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -279,28 +297,8 @@ export default function App() {
     setError('');
     try {
       const preview = await api.previewPush(selectedRepo);
-      if (preview.is_protected) {
-        setProtectedPrompt({ action: 'push', preview });
-      } else {
-        const res = await api.push(selectedRepo, selectedRemote || undefined);
-        setNotice(res.message || 'Pushed');
-        await refreshRepoData(selectedRepo);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const runSimple = async (fn: () => Promise<{ message: string }>) => {
-    setBusy(true);
-    setError('');
-    setNotice('');
-    try {
-      const res = await fn();
-      setNotice(res.message || 'Done');
-      await refreshRepoData(selectedRepo);
+      if (preview.is_protected) setProtectedPrompt({ action: 'push', preview });
+      else await runSimple(() => api.push(selectedRepo, selectedRemote || undefined), 'Pushed');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -314,9 +312,8 @@ export default function App() {
     setError('');
     try {
       const res = await api.sendConflictToChat(selectedRepo, CONVERSATION_ID);
-      if (res.sent) {
-        setNotice('Conflict context sent to AI chat');
-      } else {
+      if (res.sent) setNotice('Conflict context sent to AI chat');
+      else {
         await navigator.clipboard.writeText(res.prompt);
         setNotice('Copied conflict prompt to clipboard');
       }
@@ -326,9 +323,6 @@ export default function App() {
       setBusy(false);
     }
   };
-
-  const hasRemote = (status?.remotes.length ?? 0) > 0;
-  const isPublished = Boolean(status?.upstream);
 
   return (
     <div className="gw-stack">
@@ -493,96 +487,35 @@ export default function App() {
 
       {tab === 'flow' && status && (
         <>
-          <div className="gw-card gw-stack">
-            <Picker
-              value={status.branch}
-              options={status.local_branches.map((b) => ({ value: b, label: b }))}
-              disabled={busy}
-              onChange={(b) => {
-                if (b !== status.branch) {
-                  void executeGuarded('checkout', b, { mode: 'fail_if_dirty' });
-                }
-              }}
-            />
-
-            <div className="gw-row">
-              <button
-                className="gw-btn"
-                style={{ flex: 1 }}
-                disabled={busy || !hasRemote}
-                onClick={() =>
-                  void runSimple(() => api.fetchAll(selectedRepo, selectedRemote || undefined))
-                }
-              >
-                Fetch
-              </button>
-              <button
-                className={`gw-btn ${status.behind > 0 ? 'gw-btn-primary' : ''}`}
-                style={{ flex: 1 }}
-                disabled={busy || !hasRemote}
-                onClick={() =>
-                  selectedRemote
-                    ? void runSimple(() => api.pull(selectedRepo, selectedRemote))
-                    : void executeGuarded('pull', null, { mode: 'fail_if_dirty' })
-                }
-              >
-                {status.behind > 0 ? `Pull ↓${status.behind}` : 'Pull'}
-              </button>
-              <button
-                className={`gw-btn ${!isPublished || status.ahead > 0 ? 'gw-btn-primary' : ''}`}
-                style={{ flex: 1 }}
-                disabled={busy || (hasRemote && isPublished && status.ahead === 0)}
-                onClick={() => void handlePushClick()}
-              >
-                {!hasRemote
-                  ? 'Set Remote'
-                  : !isPublished
-                    ? 'Publish Branch'
-                    : status.ahead > 0
-                      ? `Push ↑${status.ahead}`
-                      : 'Push'}
-              </button>
-            </div>
-
-            <div className="gw-row">
-              <button
-                type="button"
-                className="gw-btn"
-                title="Toggle merge direction"
-                onClick={() =>
-                  setMergeDir((d) =>
-                    d === 'current_into_target' ? 'into_current' : 'current_into_target',
-                  )
-                }
-              >
-                {mergeDir === 'current_into_target' ? '→' : '←'}
-              </button>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Picker
-                  value={mergeTarget}
-                  placeholder="Target branch..."
-                  options={status.local_branches
-                    .filter((b) => b !== status.branch)
-                    .map((b) => ({
-                      value: b,
-                      label:
-                        mergeDir === 'current_into_target'
-                          ? `${status.branch} → ${b}`
-                          : `${b} → ${status.branch}`,
-                    }))}
-                  disabled={busy}
-                  onChange={setMergeTarget}
-                />
-              </div>
-              <button
-                className="gw-btn"
-                disabled={busy || !mergeTarget}
-                onClick={() => void handleMergeClick()}
-              >
-                Merge
-              </button>
-            </div>
-          </div>
+          <BranchPanel
+            status={status}
+            selectedRemote={selectedRemote}
+            mergeTarget={mergeTarget}
+            mergeDir={mergeDir}
+            busy={busy}
+            onCheckoutLocal={(b) => void executeGuarded('checkout', b, { mode: 'fail_if_dirty' })}
+            onCheckoutRemote={(rb) => void runSimple(() => api.checkoutRemote(selectedRepo, rb))}
+            onCreateBranch={(name) => runSimple(() => api.createBranch(selectedRepo, name))}
+            onDeleteBranch={(name, force) =>
+              runSimple(() => api.deleteBranch(selectedRepo, name, force))
+            }
+            onFetch={() =>
+              void runSimple(() => api.fetchAll(selectedRepo, selectedRemote || undefined))
+            }
+            onPull={() =>
+              selectedRemote
+                ? void runSimple(() => api.pull(selectedRepo, selectedRemote))
+                : void executeGuarded('pull', null, { mode: 'fail_if_dirty' })
+            }
+            onPush={() => void handlePushClick()}
+            onMergeDirToggle={() =>
+              setMergeDir((d) =>
+                d === 'current_into_target' ? 'into_current' : 'current_into_target',
+              )
+            }
+            onMergeTargetChange={setMergeTarget}
+            onMerge={() => void handleMergeClick()}
+          />
 
           {dirtyPrompt && (
             <DirtyModal
@@ -612,13 +545,13 @@ export default function App() {
                 const act = protectedPrompt.action;
                 setProtectedPrompt(null);
                 if (act === 'merge') {
-                  if (mergeDir === 'current_into_target' && status) {
+                  if (mergeDir === 'current_into_target') {
                     await runMergeIntoTarget(mergeTarget, status.branch);
                   } else {
                     await executeGuarded('merge', mergeTarget, { mode: 'fail_if_dirty' });
                   }
                 } else {
-                  await runSimple(() => api.push(selectedRepo, selectedRemote || undefined));
+                  await runSimple(() => api.push(selectedRepo, selectedRemote || undefined), 'Pushed');
                 }
               }}
               onCancel={() => setProtectedPrompt(null)}
@@ -652,73 +585,49 @@ export default function App() {
             </div>
           )}
 
-          <div className="gw-card gw-stack">
-            {status.changes.length > 0 && (
-              <div className="gw-stack" style={{ gap: 2, maxHeight: 110, overflowY: 'auto' }}>
-                {status.changes.map((c) => (
-                  <button
-                    key={`${c.code}:${c.path}`}
-                    type="button"
-                    className="gw-picker-item gw-between"
-                    style={{ padding: '3px 5px' }}
-                    onClick={() => {
-                      setDiffMode('working');
-                      setFocusFile(c.path);
-                      setTab('diff');
-                    }}
-                  >
-                    <span
-                      style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {c.path}
-                    </span>
-                    <span className="gw-badge" style={{ marginLeft: 6 }}>
-                      {c.code}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="gw-row">
-              <input
-                className="gw-input"
-                placeholder="Quick commit (all)..."
-                value={commitMsg}
-                onChange={(e) => setCommitMsg(e.target.value)}
-              />
-              <button
-                className="gw-btn"
-                disabled={busy || !commitMsg.trim()}
-                onClick={async () => {
-                  const msg = commitMsg.trim();
-                  setCommitMsg('');
-                  await runSimple(() => api.commitAll(selectedRepo, msg));
-                }}
-              >
-                Commit
-              </button>
-            </div>
-            <div className="gw-row">
-              <button
-                className="gw-btn"
-                disabled={busy || !status.is_dirty}
-                onClick={() => void runSimple(() => api.stashSave(selectedRepo))}
-              >
-                Stash
-              </button>
-              <button
-                className="gw-btn"
-                disabled={busy}
-                onClick={() => void runSimple(() => api.stashPop(selectedRepo))}
-              >
-                Stash Pop
-              </button>
-            </div>
-          </div>
+          <ChangesPanel
+            staged={status.staged_changes}
+            unstaged={status.unstaged_changes}
+            busy={busy}
+            onCommit={(msg, amend) => runSimple(() => api.commitAll(selectedRepo, msg, amend))}
+            onUndoCommit={() => runSimple(() => api.undoCommit(selectedRepo))}
+            onStageFile={(p) =>
+              void runSimple(async () => {
+                await api.stageFile(selectedRepo, p);
+                return { message: `Staged ${p}` };
+              })
+            }
+            onUnstageFile={(p) =>
+              void runSimple(async () => {
+                await api.unstageFile(selectedRepo, p);
+                return { message: `Unstaged ${p}` };
+              })
+            }
+            onDiscardFile={(p) =>
+              void runSimple(async () => {
+                await api.discardFile(selectedRepo, p);
+                return { message: `Discarded ${p}` };
+              })
+            }
+            onStageAll={() => void runSimple(() => api.stageAll(selectedRepo))}
+            onUnstageAll={() => void runSimple(() => api.unstageAll(selectedRepo))}
+            onDiscardAll={() => void runSimple(() => api.discardAll(selectedRepo))}
+            onOpenDiff={(p) => {
+              setDiffMode('working');
+              setFocusFile(p);
+              setTab('diff');
+            }}
+          />
+
+          <StashPanel
+            stashes={stashes}
+            isDirty={status.is_dirty}
+            busy={busy}
+            onSave={(m) => void runSimple(() => api.stashSave(selectedRepo, m))}
+            onApply={(idx) => void runSimple(() => api.stashApply(selectedRepo, idx))}
+            onPop={(idx) => void runSimple(() => api.stashPopAt(selectedRepo, idx))}
+            onDrop={(idx) => void runSimple(() => api.stashDrop(selectedRepo, idx))}
+          />
         </>
       )}
 

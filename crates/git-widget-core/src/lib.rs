@@ -1,11 +1,13 @@
 //! Core Git operations, repository scanner, and safety guards for git-widget.
 
+pub mod branches;
 pub mod diff;
 pub mod error;
 pub mod git_cli;
 pub mod ops;
 pub mod safety;
 pub mod scanner;
+pub mod stash;
 pub mod status;
 
 pub use error::{CoreError, Result};

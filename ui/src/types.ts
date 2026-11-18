@@ -28,10 +28,19 @@ export interface RepoStatus {
   is_dirty: boolean;
   is_merging: boolean;
   changes: FileChange[];
+  staged_changes: FileChange[];
+  unstaged_changes: FileChange[];
   conflicts: string[];
   local_branches: string[];
   remote_branches: string[];
   remotes: string[];
+}
+
+export interface StashEntry {
+  index: number;
+  reference: string;
+  message: string;
+  date_rel: string;
 }
 
 export interface DiffHunk {

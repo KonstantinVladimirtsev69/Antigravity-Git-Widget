@@ -191,12 +191,55 @@ pub async fn init_repo(dir_path: &Path) -> Result<OpResult> {
 }
 
 pub async fn commit_all(repo_path: &Path, message: &str) -> Result<OpResult> {
+    commit_smart(repo_path, message, false).await
+}
+
+/// VS Code-style smart commit: commits staged changes if any exist, otherwise stages all first.
+/// Supports `amend: true` to amend HEAD commit.
+pub async fn commit_smart(repo_path: &Path, message: &str, amend: bool) -> Result<OpResult> {
     validate_non_empty(message, "commit message")?;
-    run_git(repo_path, &["add", "-A"], LOCAL_TIMEOUT_SECS).await?;
-    let out = run_git(repo_path, &["commit", "-m", message], LOCAL_TIMEOUT_SECS).await?;
+    let st = get_status(repo_path).await?;
+    if st.staged_changes.is_empty() && (!amend || st.is_dirty) {
+        run_git(repo_path, &["add", "-A"], LOCAL_TIMEOUT_SECS).await?;
+    }
+    let mut args = vec!["commit"];
+    if amend {
+        args.push("--amend");
+    }
+    args.push("-m");
+    args.push(message);
+    let out = run_git(repo_path, &args, LOCAL_TIMEOUT_SECS).await?;
     Ok(OpResult {
         success: true,
         message: out.stdout.trim().to_string(),
+        has_conflicts: false,
+    })
+}
+
+pub async fn stage_all(repo_path: &Path) -> Result<OpResult> {
+    run_git(repo_path, &["add", "-A"], LOCAL_TIMEOUT_SECS).await?;
+    Ok(OpResult {
+        success: true,
+        message: "Staged all changes".to_string(),
+        has_conflicts: false,
+    })
+}
+
+pub async fn unstage_all(repo_path: &Path) -> Result<OpResult> {
+    run_git(repo_path, &["reset", "HEAD"], LOCAL_TIMEOUT_SECS).await?;
+    Ok(OpResult {
+        success: true,
+        message: "Unstaged all changes".to_string(),
+        has_conflicts: false,
+    })
+}
+
+pub async fn discard_all(repo_path: &Path) -> Result<OpResult> {
+    run_git(repo_path, &["checkout", "--", "."], LOCAL_TIMEOUT_SECS).await?;
+    run_git(repo_path, &["clean", "-fd"], LOCAL_TIMEOUT_SECS).await?;
+    Ok(OpResult {
+        success: true,
+        message: "Discarded all unstaged changes".to_string(),
         has_conflicts: false,
     })
 }

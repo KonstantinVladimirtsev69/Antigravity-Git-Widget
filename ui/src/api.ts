@@ -10,6 +10,7 @@ import type {
   RepoStatus,
   ReposResponse,
   ScannerConfig,
+  StashEntry,
 } from './types';
 
 const params = new URLSearchParams(window.location.search);
@@ -64,12 +65,45 @@ export const api = {
     request<OpResult>('./api/git/add-remote', { method: 'POST', body: JSON.stringify({ repo, name, url }) }),
   initRepo: (repo: string) =>
     request<OpResult>('./api/git/init-repo', { method: 'POST', body: JSON.stringify({ repo }) }),
-  commitAll: (repo: string, message: string) =>
-    request<OpResult>('./api/git/commit', { method: 'POST', body: JSON.stringify({ repo, message }) }),
+  commitAll: (repo: string, message: string, amend = false) =>
+    request<OpResult>('./api/git/commit', {
+      method: 'POST',
+      body: JSON.stringify({ repo, message, amend }),
+    }),
   stashSave: (repo: string, message?: string) =>
     request<OpResult>('./api/git/stash-save', { method: 'POST', body: JSON.stringify({ repo, message }) }),
   stashPop: (repo: string) =>
     request<OpResult>('./api/git/stash-pop', { method: 'POST', body: JSON.stringify({ repo }) }),
+  listStashes: (repo: string) =>
+    request<StashEntry[]>(`./api/git/stashes?repo=${encodeURIComponent(repo)}`),
+  stashApply: (repo: string, index: number) =>
+    request<OpResult>('./api/git/stash-apply', { method: 'POST', body: JSON.stringify({ repo, index }) }),
+  stashPopAt: (repo: string, index: number) =>
+    request<OpResult>('./api/git/stash-pop-at', { method: 'POST', body: JSON.stringify({ repo, index }) }),
+  stashDrop: (repo: string, index: number) =>
+    request<OpResult>('./api/git/stash-drop', { method: 'POST', body: JSON.stringify({ repo, index }) }),
+  createBranch: (repo: string, name: string) =>
+    request<OpResult>('./api/git/branch-create', { method: 'POST', body: JSON.stringify({ repo, name }) }),
+  deleteBranch: (repo: string, name: string, force = false) =>
+    request<OpResult>('./api/git/branch-delete', {
+      method: 'POST',
+      body: JSON.stringify({ repo, name, force }),
+    }),
+  checkoutRemote: (repo: string, remoteBranch: string) =>
+    request<OpResult>('./api/git/branch-checkout-remote', {
+      method: 'POST',
+      body: JSON.stringify({ repo, remote_branch: remoteBranch }),
+    }),
+  undoCommit: (repo: string) =>
+    request<OpResult>('./api/git/undo-commit', { method: 'POST', body: JSON.stringify({ repo }) }),
+  cherryPick: (repo: string, hash: string) =>
+    request<OpResult>('./api/git/cherry-pick', { method: 'POST', body: JSON.stringify({ repo, hash }) }),
+  stageAll: (repo: string) =>
+    request<OpResult>('./api/git/stage-all', { method: 'POST', body: JSON.stringify({ repo }) }),
+  unstageAll: (repo: string) =>
+    request<OpResult>('./api/git/unstage-all', { method: 'POST', body: JSON.stringify({ repo }) }),
+  discardAll: (repo: string) =>
+    request<OpResult>('./api/git/discard-all', { method: 'POST', body: JSON.stringify({ repo }) }),
   abortMerge: (repo: string) =>
     request<OpResult>('./api/git/abort-merge', { method: 'POST', body: JSON.stringify({ repo }) }),
   previewMerge: (repo: string, source: string) =>

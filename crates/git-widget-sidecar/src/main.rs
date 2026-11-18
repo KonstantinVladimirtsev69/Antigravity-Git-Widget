@@ -1,5 +1,6 @@
 //! Antigravity 2.0 Sidecar HTTP server with embedded React Web UI.
 
+mod branch_routes;
 mod config;
 mod diff_routes;
 mod routes;
@@ -9,6 +10,11 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
+};
+use branch_routes::{
+    checkout_remote_handler, cherry_pick_handler, create_branch_handler, delete_branch_handler,
+    discard_all_handler, list_stashes_handler, stage_all_handler, stash_apply_handler,
+    stash_drop_handler, stash_pop_at_handler, undo_commit_handler, unstage_all_handler,
 };
 use diff_routes::{
     accept_hunk_handler, ask_ai_handler, commits_list_handler, diff_list_handler,
@@ -84,6 +90,18 @@ async fn main() {
         .route("/api/git/commit", post(commit_handler))
         .route("/api/git/stash-save", post(stash_save_handler))
         .route("/api/git/stash-pop", post(stash_pop_handler))
+        .route("/api/git/stashes", get(list_stashes_handler))
+        .route("/api/git/stash-apply", post(stash_apply_handler))
+        .route("/api/git/stash-pop-at", post(stash_pop_at_handler))
+        .route("/api/git/stash-drop", post(stash_drop_handler))
+        .route("/api/git/branch-create", post(create_branch_handler))
+        .route("/api/git/branch-delete", post(delete_branch_handler))
+        .route("/api/git/branch-checkout-remote", post(checkout_remote_handler))
+        .route("/api/git/undo-commit", post(undo_commit_handler))
+        .route("/api/git/cherry-pick", post(cherry_pick_handler))
+        .route("/api/git/stage-all", post(stage_all_handler))
+        .route("/api/git/unstage-all", post(unstage_all_handler))
+        .route("/api/git/discard-all", post(discard_all_handler))
         .route("/api/git/abort-merge", post(abort_merge_handler))
         .route("/api/git/preview-merge", post(preview_merge_handler))
         .route("/api/git/preview-push", post(preview_push_handler))

@@ -23,6 +23,8 @@ pub struct RepoStatus {
     pub is_dirty: bool,
     pub is_merging: bool,
     pub changes: Vec<FileChange>,
+    pub staged_changes: Vec<FileChange>,
+    pub unstaged_changes: Vec<FileChange>,
     pub conflicts: Vec<String>,
     pub local_branches: Vec<String>,
     pub remote_branches: Vec<String>,
@@ -47,6 +49,8 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
     let mut ahead = 0u32;
     let mut behind = 0u32;
     let mut changes = Vec::new();
+    let mut staged_changes = Vec::new();
+    let mut unstaged_changes = Vec::new();
     let mut conflicts = Vec::new();
 
     for line in status_out.stdout.lines() {
@@ -65,6 +69,30 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
         } else if let Some(change) = parse_porcelain_entry(line) {
             if change.is_conflicted {
                 conflicts.push(change.path.clone());
+            } else if change.code == "??" {
+                unstaged_changes.push(FileChange {
+                    path: change.path.clone(),
+                    code: "U".to_string(),
+                    is_conflicted: false,
+                });
+            } else {
+                let mut chars = change.code.chars();
+                let x = chars.next().unwrap_or('.');
+                let y = chars.next().unwrap_or('.');
+                if x != '.' {
+                    staged_changes.push(FileChange {
+                        path: change.path.clone(),
+                        code: x.to_string(),
+                        is_conflicted: false,
+                    });
+                }
+                if y != '.' {
+                    unstaged_changes.push(FileChange {
+                        path: change.path.clone(),
+                        code: y.to_string(),
+                        is_conflicted: false,
+                    });
+                }
             }
             changes.push(change);
         }
@@ -83,6 +111,8 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
         is_dirty,
         is_merging,
         changes,
+        staged_changes,
+        unstaged_changes,
         conflicts,
         local_branches,
         remote_branches,

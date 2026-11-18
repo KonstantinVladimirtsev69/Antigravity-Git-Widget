@@ -111,17 +111,46 @@ export function DiffReview({
         </button>
       </div>
       {mode === 'commit' && (
-        <Picker
-          value={selectedCommit}
-          searchable
-          placeholder="Select commit..."
-          options={commits.map((c) => ({
-            value: c.hash,
-            label: `${c.short_hash} · ${c.subject}`,
-            sub: `${c.author} · ${c.date_rel}`,
-          }))}
-          onChange={onCommitSelect}
-        />
+        <div className="gw-stack" style={{ gap: 5 }}>
+          <Picker
+            value={selectedCommit}
+            searchable
+            placeholder="Select commit..."
+            options={commits.map((c) => ({
+              value: c.hash,
+              label: `${c.short_hash} · ${c.subject}`,
+              sub: `${c.author} · ${c.date_rel}`,
+            }))}
+            onChange={onCommitSelect}
+          />
+          {selectedCommit && (
+            <div className="gw-row">
+              <button
+                type="button"
+                className="gw-btn gw-btn-xs"
+                onClick={() => {
+                  void navigator.clipboard.writeText(selectedCommit);
+                  onNotify(`Copied ${selectedCommit.slice(0, 8)}`);
+                }}
+              >
+                Copy Hash
+              </button>
+              <button
+                type="button"
+                className="gw-btn gw-btn-xs"
+                disabled={busy}
+                onClick={() =>
+                  void runAction(
+                    () => api.cherryPick(repo, selectedCommit),
+                    `Cherry-picked ${selectedCommit.slice(0, 8)}`,
+                  )
+                }
+              >
+                Cherry-Pick
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
