@@ -124,6 +124,16 @@ export default function App() {
     }
   }, [selectedRepo, refreshRepoData]);
 
+  useEffect(() => {
+    if (!selectedRepo) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && !busy && !dirtyPrompt && !protectedPrompt) {
+        void refreshRepoData(selectedRepo, diffMode);
+      }
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [selectedRepo, diffMode, busy, dirtyPrompt, protectedPrompt, refreshRepoData]);
+
   const repoOptions = useMemo(
     () =>
       repos.map((r) => ({
@@ -307,8 +317,30 @@ export default function App() {
         </button>
       </div>
 
+      {status && (
+        <div className="gw-row">
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Picker
+              value={selectedRemote}
+              placeholder="No remote configured..."
+              options={status.remotes.map((r) => ({ value: r, label: `remote: ${r}` }))}
+              disabled={busy || status.remotes.length === 0}
+              onChange={setSelectedRemote}
+            />
+          </div>
+          <button
+            type="button"
+            className="gw-btn"
+            title="Add remote"
+            onClick={() => setShowRemoteForm((v) => !v)}
+          >
+            +
+          </button>
+        </div>
+      )}
+
       {status &&
-        (status.ahead > 0 || status.behind > 0 || status.is_dirty || status.is_merging || autoMatched || !hasRemote) && (
+        (status.ahead > 0 || status.behind > 0 || status.is_dirty || status.is_merging || autoMatched) && (
           <div className="gw-between">
             <div className="gw-row" style={{ flexWrap: 'wrap' }}>
               {status.ahead > 0 && <span className="gw-badge gw-badge-ok">↑{status.ahead}</span>}
@@ -317,15 +349,6 @@ export default function App() {
                 <span className="gw-badge gw-badge-warn">dirty ({status.changes.length})</span>
               )}
               {status.is_merging && <span className="gw-badge gw-badge-danger">CONFLICT</span>}
-              {!hasRemote && (
-                <button
-                  type="button"
-                  className="gw-btn gw-btn-xs"
-                  onClick={() => setShowRemoteForm((v) => !v)}
-                >
-                  + Add Remote
-                </button>
-              )}
             </div>
             {autoMatched && <span className="gw-badge">Auto</span>}
           </div>
@@ -443,26 +466,6 @@ export default function App() {
             />
 
             <div className="gw-row">
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Picker
-                  value={selectedRemote}
-                  placeholder="No remote..."
-                  options={status.remotes.map((r) => ({ value: r, label: `remote: ${r}` }))}
-                  disabled={busy || status.remotes.length === 0}
-                  onChange={setSelectedRemote}
-                />
-              </div>
-              <button
-                type="button"
-                className="gw-btn"
-                title="Add remote"
-                onClick={() => setShowRemoteForm((v) => !v)}
-              >
-                +
-              </button>
-            </div>
-
-            <div className="gw-row">
               <button
                 className="gw-btn"
                 style={{ flex: 1 }}
@@ -474,7 +477,7 @@ export default function App() {
                 Fetch
               </button>
               <button
-                className="gw-btn"
+                className={`gw-btn ${status.behind > 0 ? 'gw-btn-primary' : ''}`}
                 style={{ flex: 1 }}
                 disabled={busy || !hasRemote}
                 onClick={() =>
@@ -483,15 +486,21 @@ export default function App() {
                     : void executeGuarded('pull', null, { mode: 'fail_if_dirty' })
                 }
               >
-                Pull
+                {status.behind > 0 ? `Pull ↓${status.behind}` : 'Pull'}
               </button>
               <button
-                className="gw-btn gw-btn-primary"
+                className={`gw-btn ${!isPublished || status.ahead > 0 ? 'gw-btn-primary' : ''}`}
                 style={{ flex: 1 }}
-                disabled={busy}
+                disabled={busy || (hasRemote && isPublished && status.ahead === 0)}
                 onClick={() => void handlePushClick()}
               >
-                {!hasRemote ? 'Set Remote' : isPublished ? 'Push' : 'Publish Branch'}
+                {!hasRemote
+                  ? 'Set Remote'
+                  : !isPublished
+                    ? 'Publish Branch'
+                    : status.ahead > 0
+                      ? `Push ↑${status.ahead}`
+                      : 'Push'}
               </button>
             </div>
 
