@@ -21,13 +21,23 @@ pub async fn run_git_raw(repo_path: &Path, args: &[&str], timeout_secs: u64) -> 
         .arg(repo_path)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("LC_ALL", "C")
+        .env("LC_MESSAGES", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
     #[cfg(windows)]
     {
+        // Prefer native Windows OpenSSH so non-ASCII user profile paths (e.g. Cyrillic)
+        // resolve `~/.ssh/known_hosts` and `~/.ssh/config` reliably.
+        if std::env::var_os("GIT_SSH_COMMAND").is_none()
+            && Path::new(r"C:\Windows\System32\OpenSSH\ssh.exe").exists()
+        {
+            cmd.env(
+                "GIT_SSH_COMMAND",
+                "C:/Windows/System32/OpenSSH/ssh.exe -o StrictHostKeyChecking=accept-new",
+            );
+        }
         // CREATE_NO_WINDOW prevents flashing console windows on Windows.
         cmd.creation_flags(0x0800_0000);
     }
