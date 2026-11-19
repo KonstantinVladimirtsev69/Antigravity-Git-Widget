@@ -68,15 +68,14 @@ git-widget/
 
 ## Установка
 
-### Быстрая установка (PowerShell)
+### Вариант 1: Одним `.exe` файлом (без Rust и Node.js)
 
-```powershell
-git clone https://github.com/YOUR_USERNAME/git-widget.git
-cd git-widget
-.\install.ps1
-```
+1. Скачай **`git-widget-sidecar.exe`** из раздела [Releases](../../releases).
+2. **Запусти `git-widget-sidecar.exe` двойным кликом** (или `.\git-widget-sidecar.exe --install` в PowerShell).
+3. Бинарник сам установит себя в `%USERPROFILE%\.gemini\config\plugins\git-widget\` и пропишет `sidecar.json`.
+4. Перезапусти Antigravity 2.0 или открой вкладку **Git Widget** в правой шторке.
 
-Скрипт `install.ps1` соберёт релизный бинарник (если он ещё не собран), скопирует его в `%USERPROFILE%\.gemini\config\plugins\git-widget\` и автоматически пропишет путь текущего пользователя в `sidecar.json`.
+### Вариант 2: Из исходников (PowerShell)
 
 ### Ручная сборка и запуск тестов
 

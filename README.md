@@ -71,17 +71,14 @@ git-widget/
 
 ## Installation
 
-### Quick Install (PowerShell)
+### Option 1: Single-File Installer (No Rust / Node.js required)
 
-Clone the repository and run the installer script:
+1. Download **`git-widget-sidecar.exe`** from [GitHub Releases](../../releases).
+2. **Double-click `git-widget-sidecar.exe`** (or run `.\git-widget-sidecar.exe --install` in PowerShell).
+3. It automatically installs itself into `%USERPROFILE%\.gemini\config\plugins\git-widget\` and configures `sidecar.json` for Antigravity 2.0.
+4. Restart Antigravity 2.0 or open **Git Widget** in the right auxiliary pane.
 
-```powershell
-git clone https://github.com/YOUR_USERNAME/git-widget.git
-cd git-widget
-.\install.ps1
-```
-
-`install.ps1` compiles the release binary (if not already built), deploys it to `%USERPROFILE%\.gemini\config\plugins\git-widget\`, and configures `sidecar.json` for your Windows user profile.
+### Option 2: From Source (PowerShell)
 
 ### Manual Build from Source
 

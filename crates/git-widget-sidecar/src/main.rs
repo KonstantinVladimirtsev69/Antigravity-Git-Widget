@@ -4,6 +4,7 @@ mod branch_routes;
 mod config;
 mod diff_routes;
 mod graph_routes;
+mod installer;
 mod routes;
 
 use axum::{
@@ -67,6 +68,11 @@ async fn static_handler(uri: Uri) -> Response {
 
 #[tokio::main]
 async fn main() {
+    if installer::should_run_installer() {
+        installer::run_self_install();
+        return;
+    }
+
     let port: u16 = std::env::var("ANTIGRAVITY_SIDECAR_WEB_PORT")
         .ok()
         .and_then(|v| v.parse().ok())

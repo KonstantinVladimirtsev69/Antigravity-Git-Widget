@@ -39,9 +39,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: git-widget-sidecar-windows-x64
-          path: |
-            target/release/git-widget-sidecar.exe
-            install.ps1
-            README.md
-            README.ru.md
-            LICENSE
+          path: target/release/git-widget-sidecar.exe
