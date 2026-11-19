@@ -14,7 +14,10 @@ $AssetsDir = Join-Path $PluginDir "assets"
 $SidecarDir = Join-Path $PluginDir "sidecars\git_widget"
 $TargetExe = Join-Path $SidecarDir "git-widget-sidecar.exe"
 
-$ReleaseExe = Join-Path $RepoRoot "target\release\git-widget-sidecar.exe"
+$LocalExe = Join-Path $RepoRoot "git-widget-sidecar.exe"
+$TargetBuildExe = Join-Path $RepoRoot "target\release\git-widget-sidecar.exe"
+$ReleaseExe = if (Test-Path $LocalExe) { $LocalExe } else { $TargetBuildExe }
+
 if (-not (Test-Path $ReleaseExe)) {
     Write-Host "[git-widget] Building release binary..." -ForegroundColor Cyan
     Push-Location (Join-Path $RepoRoot "ui")
@@ -24,6 +27,7 @@ if (-not (Test-Path $ReleaseExe)) {
     Push-Location $RepoRoot
     cargo build --release --workspace
     Pop-Location
+    $ReleaseExe = $TargetBuildExe
 }
 
 New-Item -ItemType Directory -Force -Path $AssetsDir | Out-Null
