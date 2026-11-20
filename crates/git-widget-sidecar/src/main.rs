@@ -5,6 +5,7 @@ mod config;
 mod diff_routes;
 mod graph_routes;
 mod installer;
+mod integrate_routes;
 mod routes;
 
 use axum::{
@@ -25,6 +26,10 @@ use diff_routes::{
 use graph_routes::{
     commit_details_handler, create_github_repo_handler, graph_handler, prs_handler,
     suggest_commit_handler,
+};
+use integrate_routes::{
+    abort_rebase_handler, continue_rebase_handler, integrate_handler, preview_integrate_handler,
+    pull_both_handler, save_integration_mode_handler, scan_sync_handler,
 };
 use routes::{
     abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, get_repos,
@@ -89,9 +94,19 @@ async fn main() {
     let app = Router::new()
         .route("/api/repos", get(get_repos))
         .route("/api/config", post(post_config))
+        .route(
+            "/api/config/integration-mode",
+            post(save_integration_mode_handler),
+        )
         .route("/api/resolve-workspace", post(resolve_workspace))
         .route("/api/status", get(status_handler))
         .route("/api/git/guarded", post(guarded_handler))
+        .route("/api/git/scan-sync", post(scan_sync_handler))
+        .route("/api/git/pull-both", post(pull_both_handler))
+        .route("/api/git/preview-integrate", post(preview_integrate_handler))
+        .route("/api/git/integrate", post(integrate_handler))
+        .route("/api/git/abort-rebase", post(abort_rebase_handler))
+        .route("/api/git/continue-rebase", post(continue_rebase_handler))
         .route("/api/git/fetch", post(fetch_handler))
         .route("/api/git/pull", post(pull_handler))
         .route("/api/git/push", post(push_handler))

@@ -5,9 +5,11 @@ import type {
   ConflictChatResponse,
   DiffFile,
   DirtyStrategy,
+  DualBranchSync,
   GraphResponse,
   GuardedOpKind,
   GuardedOpOutcome,
+  IntegrationMode,
   OpResult,
   PrListResponse,
   RepoStatus,
@@ -45,6 +47,11 @@ export const api = {
   getRepos: () => request<ReposResponse>('./api/repos'),
   saveConfig: (config: ScannerConfig) =>
     request<ReposResponse>('./api/config', { method: 'POST', body: JSON.stringify(config) }),
+  saveIntegrationMode: (mode: IntegrationMode) =>
+    request<{ mode: IntegrationMode }>('./api/config/integration-mode', {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    }),
   resolveWorkspace: (workspaceUris: string[]) =>
     request<{ matched_path: string | null }>('./api/resolve-workspace', {
       method: 'POST',
@@ -123,6 +130,47 @@ export const api = {
     request<OpResult>('./api/git/discard-all', { method: 'POST', body: JSON.stringify({ repo }) }),
   abortMerge: (repo: string) =>
     request<OpResult>('./api/git/abort-merge', { method: 'POST', body: JSON.stringify({ repo }) }),
+  abortRebase: (repo: string) =>
+    request<OpResult>('./api/git/abort-rebase', { method: 'POST', body: JSON.stringify({ repo }) }),
+  continueRebase: (repo: string) =>
+    request<OpResult>('./api/git/continue-rebase', { method: 'POST', body: JSON.stringify({ repo }) }),
+  scanSync: (
+    repo: string,
+    source: string,
+    target: string,
+    remote?: string,
+    doFetch = true,
+  ) =>
+    request<DualBranchSync>('./api/git/scan-sync', {
+      method: 'POST',
+      body: JSON.stringify({ repo, source, target, remote, fetch: doFetch }),
+    }),
+  pullBoth: (repo: string, source: string, target: string, remote?: string) =>
+    request<OpResult>('./api/git/pull-both', {
+      method: 'POST',
+      body: JSON.stringify({ repo, source, target, remote }),
+    }),
+  previewIntegrate: (
+    repo: string,
+    source: string,
+    target: string,
+    mode: IntegrationMode,
+  ) =>
+    request<ActionPreview>('./api/git/preview-integrate', {
+      method: 'POST',
+      body: JSON.stringify({ repo, source, target, mode }),
+    }),
+  integrate: (
+    repo: string,
+    source: string,
+    target: string,
+    mode: IntegrationMode,
+    strategy: DirtyStrategy,
+  ) =>
+    request<GuardedOpOutcome>('./api/git/integrate', {
+      method: 'POST',
+      body: JSON.stringify({ repo, source, target, mode, strategy }),
+    }),
   previewMerge: (repo: string, source: string) =>
     request<ActionPreview>('./api/git/preview-merge', { method: 'POST', body: JSON.stringify({ repo, source }) }),
   previewPush: (repo: string) =>

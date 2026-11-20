@@ -6,11 +6,13 @@ pub mod error;
 pub mod git_cli;
 pub mod github;
 pub mod graph;
+pub mod integrate;
 pub mod ops;
 pub mod safety;
 pub mod scanner;
 pub mod stash;
 pub mod status;
+pub mod sync;
 
 pub use error::{CoreError, Result};
 

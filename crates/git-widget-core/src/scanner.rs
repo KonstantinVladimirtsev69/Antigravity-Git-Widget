@@ -1,6 +1,6 @@
 //! Recursive repository scanner supporting standard .git dirs and worktrees.
 
-use crate::error::Result;
+use crate::{error::Result, integrate::IntegrationMode};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -32,6 +32,8 @@ pub struct ScannerConfig {
     pub max_depth: usize,
     #[serde(default)]
     pub github_token: Option<String>,
+    #[serde(default)]
+    pub integration_mode: IntegrationMode,
 }
 
 impl Default for ScannerConfig {
@@ -40,6 +42,7 @@ impl Default for ScannerConfig {
             roots: vec![r"C:\Projects\".to_string()],
             max_depth: 3,
             github_token: None,
+            integration_mode: IntegrationMode::default(),
         }
     }
 }

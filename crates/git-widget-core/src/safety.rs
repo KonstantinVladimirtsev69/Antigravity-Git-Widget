@@ -151,7 +151,19 @@ pub async fn preview_push(repo_path: &Path) -> Result<ActionPreview> {
 }
 
 pub async fn abort_merge(repo_path: &Path) -> Result<OpResult> {
-    run_git(repo_path, &["merge", "--abort"], LOCAL_TIMEOUT_SECS).await?;
+    let has_merge_head = run_git(
+        repo_path,
+        &["rev-parse", "--verify", "--quiet", "MERGE_HEAD"],
+        LOCAL_TIMEOUT_SECS,
+    )
+    .await
+    .is_ok();
+    let args = if has_merge_head {
+        &["merge", "--abort"][..]
+    } else {
+        &["reset", "--merge"][..]
+    };
+    run_git(repo_path, args, LOCAL_TIMEOUT_SECS).await?;
     Ok(OpResult {
         success: true,
         message: "Merge aborted".to_string(),

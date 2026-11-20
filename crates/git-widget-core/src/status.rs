@@ -5,7 +5,15 @@ use crate::{
     git_cli::{run_git, LOCAL_TIMEOUT_SECS},
 };
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct BranchTracking {
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
+    pub gone: bool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileChange {
@@ -22,6 +30,7 @@ pub struct RepoStatus {
     pub behind: u32,
     pub is_dirty: bool,
     pub is_merging: bool,
+    pub is_rebasing: bool,
     pub changes: Vec<FileChange>,
     pub staged_changes: Vec<FileChange>,
     pub unstaged_changes: Vec<FileChange>,
@@ -29,6 +38,7 @@ pub struct RepoStatus {
     pub local_branches: Vec<String>,
     pub remote_branches: Vec<String>,
     pub remotes: Vec<String>,
+    pub branch_tracking: HashMap<String, BranchTracking>,
 }
 
 /// Reads full status (`git status --porcelain=v2 --branch`) and branch list.
@@ -98,9 +108,11 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
         }
     }
 
-    let (local_branches, remote_branches) = list_branches(repo_path).await?;
     let remotes = list_remotes(repo_path).await;
+    let (local_branches, remote_branches, mut branch_tracking) = list_branches(repo_path).await?;
+    fill_fallback_tracking(repo_path, &local_branches, &remote_branches, &remotes, &mut branch_tracking).await;
     let is_merging = is_merge_in_progress(repo_path).await;
+    let is_rebasing = is_rebase_in_progress(repo_path).await;
     let is_dirty = !changes.is_empty();
 
     Ok(RepoStatus {
@@ -110,6 +122,7 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
         behind,
         is_dirty,
         is_merging,
+        is_rebasing,
         changes,
         staged_changes,
         unstaged_changes,
@@ -117,6 +130,7 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
         local_branches,
         remote_branches,
         remotes,
+        branch_tracking,
     })
 }
 
@@ -162,13 +176,32 @@ fn parse_porcelain_entry(line: &str) -> Option<FileChange> {
     None
 }
 
-async fn list_branches(repo_path: &Path) -> Result<(Vec<String>, Vec<String>)> {
+fn parse_track_counts(track: &str) -> (u32, u32, bool) {
+    let mut ahead = 0u32;
+    let mut behind = 0u32;
+    let mut gone = false;
+    for seg in track.split(',') {
+        let s = seg.trim();
+        if s == "gone" {
+            gone = true;
+        } else if let Some(n) = s.strip_prefix("ahead ") {
+            ahead = n.trim().parse().unwrap_or(0);
+        } else if let Some(n) = s.strip_prefix("behind ") {
+            behind = n.trim().parse().unwrap_or(0);
+        }
+    }
+    (ahead, behind, gone)
+}
+
+async fn list_branches(
+    repo_path: &Path,
+) -> Result<(Vec<String>, Vec<String>, HashMap<String, BranchTracking>)> {
     let local_out = run_git(
         repo_path,
         &[
             "for-each-ref",
             "--sort=-committerdate",
-            "--format=%(refname:short)",
+            "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track,nobracket)",
             "refs/heads",
         ],
         LOCAL_TIMEOUT_SECS,
@@ -187,13 +220,36 @@ async fn list_branches(repo_path: &Path) -> Result<(Vec<String>, Vec<String>)> {
     )
     .await?;
 
-    let local: Vec<String> = local_out
-        .stdout
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(ToString::to_string)
-        .collect();
+    let mut local = Vec::new();
+    let mut tracking = HashMap::new();
+    for line in local_out.stdout.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.splitn(3, '\t');
+        let name = parts.next().unwrap_or("").trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let up_raw = parts.next().unwrap_or("").trim();
+        let track_raw = parts.next().unwrap_or("").trim();
+        let (ahead, behind, gone) = parse_track_counts(track_raw);
+        tracking.insert(
+            name.clone(),
+            BranchTracking {
+                upstream: if up_raw.is_empty() {
+                    None
+                } else {
+                    Some(up_raw.to_string())
+                },
+                ahead,
+                behind,
+                gone,
+            },
+        );
+        local.push(name);
+    }
 
     let remote: Vec<String> = remote_out
         .stdout
@@ -203,7 +259,50 @@ async fn list_branches(repo_path: &Path) -> Result<(Vec<String>, Vec<String>)> {
         .map(ToString::to_string)
         .collect();
 
-    Ok((local, remote))
+    Ok((local, remote, tracking))
+}
+
+async fn fill_fallback_tracking(
+    repo_path: &Path,
+    local_branches: &[String],
+    remote_branches: &[String],
+    remotes: &[String],
+    tracking: &mut HashMap<String, BranchTracking>,
+) {
+    let primary_remote = if remotes.iter().any(|r| r == "origin") {
+        Some("origin")
+    } else {
+        remotes.first().map(String::as_str)
+    };
+    let Some(rem) = primary_remote else {
+        return;
+    };
+    for branch in local_branches {
+        let Some(entry) = tracking.get_mut(branch) else {
+            continue;
+        };
+        if entry.upstream.is_some() {
+            continue;
+        }
+        let candidate = format!("{rem}/{branch}");
+        if !remote_branches.iter().any(|rb| rb == &candidate) {
+            continue;
+        }
+        let spec = format!("{branch}...{candidate}");
+        if let Ok(out) = run_git(
+            repo_path,
+            &["rev-list", "--left-right", "--count", &spec],
+            LOCAL_TIMEOUT_SECS,
+        )
+        .await
+        {
+            let mut nums = out.stdout.split_whitespace();
+            if let (Some(a), Some(b)) = (nums.next(), nums.next()) {
+                entry.ahead = a.parse().unwrap_or(0);
+                entry.behind = b.parse().unwrap_or(0);
+            }
+        }
+    }
 }
 
 async fn list_remotes(repo_path: &Path) -> Vec<String> {
@@ -227,4 +326,30 @@ async fn is_merge_in_progress(repo_path: &Path) -> bool {
     )
     .await
     .is_ok()
+}
+
+async fn is_rebase_in_progress(repo_path: &Path) -> bool {
+    for marker in ["rebase-merge", "rebase-apply"] {
+        if let Ok(out) = run_git(
+            repo_path,
+            &["rev-parse", "--git-path", marker],
+            LOCAL_TIMEOUT_SECS,
+        )
+        .await
+        {
+            let p = out.stdout.trim();
+            if !p.is_empty() {
+                let candidate = Path::new(p);
+                let resolved = if candidate.is_absolute() {
+                    candidate.to_path_buf()
+                } else {
+                    repo_path.join(candidate)
+                };
+                if resolved.exists() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }

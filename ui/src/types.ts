@@ -4,10 +4,35 @@ export interface RepoInfo {
   is_worktree: boolean;
 }
 
+export type IntegrationMode = 'merge' | 'merge_no_ff' | 'squash' | 'rebase' | 'ff_only';
+
+export interface BranchTracking {
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  gone: boolean;
+}
+
+export interface BranchSyncState {
+  branch: string;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  gone: boolean;
+}
+
+export interface DualBranchSync {
+  source: BranchSyncState;
+  target: BranchSyncState;
+  any_behind: boolean;
+  fetch_error: string | null;
+}
+
 export interface ScannerConfig {
   roots: string[];
   max_depth: number;
   github_token?: string | null;
+  integration_mode?: IntegrationMode;
 }
 
 export interface ReposResponse {
@@ -28,6 +53,7 @@ export interface RepoStatus {
   behind: number;
   is_dirty: boolean;
   is_merging: boolean;
+  is_rebasing: boolean;
   changes: FileChange[];
   staged_changes: FileChange[];
   unstaged_changes: FileChange[];
@@ -35,6 +61,7 @@ export interface RepoStatus {
   local_branches: string[];
   remote_branches: string[];
   remotes: string[];
+  branch_tracking: Record<string, BranchTracking>;
 }
 
 export interface StashEntry {
@@ -155,7 +182,7 @@ export interface ConflictChatResponse {
   error?: string | null;
 }
 
-export type GuardedOpKind = 'checkout' | 'pull' | 'merge';
+export type GuardedOpKind = 'checkout' | 'pull' | 'merge' | 'integrate';
 
 export type DirtyStrategy =
   | { mode: 'fail_if_dirty' }

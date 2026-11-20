@@ -4,7 +4,8 @@ import { BranchPanel } from './BranchPanel';
 import { ChangesPanel } from './ChangesPanel';
 import { DiffReview } from './DiffReview';
 import { GraphPanel } from './GraphPanel';
-import { DirtyModal, PreviewModal, RemoteModal, SettingsPanel } from './Modals';
+import { getModeLabel } from './IntegrateSplitButton';
+import { DirtyModal, PreviewModal, RemoteModal, SettingsPanel, UnpulledModal } from './Modals';
 import { Picker } from './Picker';
 import { PrPanel } from './PrPanel';
 import { StashPanel } from './StashPanel';
@@ -13,14 +14,31 @@ import type {
   CommitInfo,
   DiffFile,
   DirtyStrategy,
+  DualBranchSync,
   GraphResponse,
   GuardedOpKind,
+  IntegrationMode,
   PrListResponse,
   RepoInfo,
   RepoStatus,
   ScannerConfig,
   StashEntry,
 } from './types';
+
+const VALID_MODES: IntegrationMode[] = ['merge', 'merge_no_ff', 'squash', 'rebase', 'ff_only'];
+const MODE_STORAGE_KEY = 'gw.integrationMode';
+
+function loadStoredMode(): IntegrationMode {
+  try {
+    const raw = window.localStorage.getItem(MODE_STORAGE_KEY);
+    if (raw && VALID_MODES.includes(raw as IntegrationMode)) {
+      return raw as IntegrationMode;
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return 'merge';
+}
 
 declare global {
   interface Window {
@@ -49,6 +67,9 @@ export default function App() {
   const [diffMode, setDiffMode] = useState<'working' | 'branch' | 'commit'>('working');
   const [mergeTarget, setMergeTarget] = useState<string>('');
   const [mergeDir, setMergeDir] = useState<'into_current' | 'current_into_target'>('current_into_target');
+  const [integrationMode, setIntegrationMode] = useState<IntegrationMode>(loadStoredMode);
+  const [dualSync, setDualSync] = useState<DualBranchSync | null>(null);
+  const [scanningSync, setScanningSync] = useState<boolean>(false);
   const [selectedRemote, setSelectedRemote] = useState<string>('');
   const [focusFile, setFocusFile] = useState<string | null>(null);
   const [showRemoteForm, setShowRemoteForm] = useState(false);
@@ -61,11 +82,20 @@ export default function App() {
     kind: GuardedOpKind;
     target: string | null;
     files: string[];
+    integratePair?: { source: string; target: string };
+  } | null>(null);
+
+  const [unpulledPrompt, setUnpulledPrompt] = useState<{
+    source: string;
+    target: string;
+    sync: DualBranchSync;
   } | null>(null);
 
   const [protectedPrompt, setProtectedPrompt] = useState<{
     action: 'merge' | 'push';
     preview: ActionPreview;
+    source?: string;
+    target?: string;
   } | null>(null);
 
   const refreshRepoData = useCallback(
@@ -120,6 +150,14 @@ export default function App() {
         const res = await api.getRepos();
         setRepos(res.repos);
         setConfig(res.config);
+        if (res.config.integration_mode && VALID_MODES.includes(res.config.integration_mode)) {
+          setIntegrationMode(res.config.integration_mode);
+          try {
+            window.localStorage.setItem(MODE_STORAGE_KEY, res.config.integration_mode);
+          } catch {
+            // ignore
+          }
+        }
         const uris = window.__gwBridge?.workspaceUris ?? [];
         if (uris.length > 0) {
           const matched = await api.resolveWorkspace(uris);
@@ -188,6 +226,33 @@ export default function App() {
     };
   }, [selectedRepo, selectedRemote]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!selectedRepo || !status || !mergeTarget || mergeTarget === status.branch || busy) {
+      if (!mergeTarget || (status && mergeTarget === status.branch)) setDualSync(null);
+      return;
+    }
+    let cancelled = false;
+    const source = mergeDir === 'current_into_target' ? status.branch : mergeTarget;
+    const target = mergeDir === 'current_into_target' ? mergeTarget : status.branch;
+    const hasRemote = status.remotes.length > 0;
+    setScanningSync(hasRemote);
+    void api
+      .scanSync(selectedRepo, source, target, selectedRemote || undefined, hasRemote)
+      .then((res) => {
+        if (!cancelled) {
+          setDualSync(res);
+          if (hasRemote) void refreshRepoData(selectedRepo, diffMode, selectedCommit);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setScanningSync(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRepo, mergeTarget, status?.branch, mergeDir]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const repoOptions = useMemo(
     () =>
       repos.map((r) => ({
@@ -238,23 +303,48 @@ export default function App() {
     }
   };
 
-  const runMergeIntoTarget = async (targetBranch: string, sourceBranch: string) => {
+  const handleIntegrationModeChange = (mode: IntegrationMode) => {
+    setIntegrationMode(mode);
+    try {
+      window.localStorage.setItem(MODE_STORAGE_KEY, mode);
+    } catch {
+      // ignore
+    }
+    void api.saveIntegrationMode(mode).catch(() => {});
+  };
+
+  const getPair = (): { source: string; target: string } | null => {
+    if (!status || !mergeTarget || mergeTarget === status.branch) return null;
+    return mergeDir === 'current_into_target'
+      ? { source: status.branch, target: mergeTarget }
+      : { source: mergeTarget, target: status.branch };
+  };
+
+  const executeIntegrate = async (
+    source: string,
+    target: string,
+    strategy: DirtyStrategy,
+  ) => {
+    if (!selectedRepo) return;
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      const ck = await api.runGuarded(selectedRepo, 'checkout', targetBranch, {
-        mode: 'fail_if_dirty',
-      });
-      if (ck.blocked_dirty) {
-        setDirtyPrompt({ kind: 'checkout', target: targetBranch, files: ck.dirty_files });
-        return;
+      const res = await api.integrate(selectedRepo, source, target, integrationMode, strategy);
+      if (res.blocked_dirty) {
+        setDirtyPrompt({
+          kind: 'integrate',
+          target: `${source} → ${target}`,
+          files: res.dirty_files,
+          integratePair: { source, target },
+        });
+      } else {
+        setDirtyPrompt(null);
+        setNotice(
+          res.op_result?.message || `${getModeLabel(integrationMode)}: ${source} → ${target}`,
+        );
+        await refreshRepoData(selectedRepo);
       }
-      const mg = await api.runGuarded(selectedRepo, 'merge', sourceBranch, {
-        mode: 'fail_if_dirty',
-      });
-      setNotice(mg.op_result?.message || `Merged ${sourceBranch} → ${targetBranch}`);
-      await refreshRepoData(selectedRepo);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -262,36 +352,58 @@ export default function App() {
     }
   };
 
-  const handleMergeClick = async () => {
-    if (!selectedRepo || !mergeTarget || !status) return;
-    if (mergeDir === 'current_into_target') {
-      if (mergeTarget === 'main' || mergeTarget === 'master') {
-        setProtectedPrompt({
-          action: 'merge',
-          preview: {
-            source: status.branch,
-            target: mergeTarget,
-            is_protected: true,
-            commit_count: 0,
-            commits: [`Checkout ${mergeTarget} and merge ${status.branch}`],
-          },
-        });
-      } else {
-        await runMergeIntoTarget(mergeTarget, status.branch);
-      }
-      return;
-    }
+  const proceedIntegration = async (source: string, target: string) => {
+    if (!selectedRepo) return;
     setBusy(true);
     setError('');
     try {
-      const preview = await api.previewMerge(selectedRepo, mergeTarget);
-      if (preview.is_protected) setProtectedPrompt({ action: 'merge', preview });
-      else await executeGuarded('merge', mergeTarget, { mode: 'fail_if_dirty' });
+      const preview = await api.previewIntegrate(selectedRepo, source, target, integrationMode);
+      if (preview.is_protected) {
+        setProtectedPrompt({ action: 'merge', preview, source, target });
+      } else {
+        await executeIntegrate(source, target, { mode: 'fail_if_dirty' });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleIntegrateClick = async () => {
+    const pair = getPair();
+    if (!selectedRepo || !pair || !status) return;
+    setBusy(true);
+    setError('');
+    try {
+      const sync = await api.scanSync(
+        selectedRepo,
+        pair.source,
+        pair.target,
+        selectedRemote || undefined,
+        status.remotes.length > 0,
+      );
+      setDualSync(sync);
+      if (sync.any_behind) {
+        setUnpulledPrompt({ source: pair.source, target: pair.target, sync });
+        return;
+      }
+      await proceedIntegration(pair.source, pair.target);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handlePullBoth = async () => {
+    const pair = getPair();
+    if (!selectedRepo || !pair) return;
+    await runSimple(
+      () => api.pullBoth(selectedRepo, pair.source, pair.target, selectedRemote || undefined),
+      'Branches pulled',
+    );
+    setDualSync(null);
   };
 
   const handlePushClick = async () => {
@@ -490,6 +602,9 @@ export default function App() {
             selectedRemote={selectedRemote}
             mergeTarget={mergeTarget}
             mergeDir={mergeDir}
+            integrationMode={integrationMode}
+            dualSync={dualSync}
+            scanningSync={scanningSync}
             busy={busy}
             onCheckoutLocal={(b) => void executeGuarded('checkout', b, { mode: 'fail_if_dirty' })}
             onCheckoutRemote={(rb) => void runSimple(() => api.checkoutRemote(selectedRepo, rb))}
@@ -505,6 +620,7 @@ export default function App() {
                 ? void runSimple(() => api.pull(selectedRepo, selectedRemote))
                 : void executeGuarded('pull', null, { mode: 'fail_if_dirty' })
             }
+            onPullBoth={() => void handlePullBoth()}
             onPush={() => void handlePushClick()}
             onMergeDirToggle={() =>
               setMergeDir((d) =>
@@ -512,42 +628,99 @@ export default function App() {
               )
             }
             onMergeTargetChange={setMergeTarget}
-            onMerge={() => void handleMergeClick()}
+            onIntegrationModeChange={handleIntegrationModeChange}
+            onIntegrate={() => void handleIntegrateClick()}
           />
+
+          {unpulledPrompt && (
+            <UnpulledModal
+              modeLabel={getModeLabel(integrationMode)}
+              sync={unpulledPrompt.sync}
+              busy={busy}
+              onPullAndContinue={async () => {
+                const { source, target } = unpulledPrompt;
+                setUnpulledPrompt(null);
+                setBusy(true);
+                setError('');
+                try {
+                  const res = await api.pullBoth(
+                    selectedRepo,
+                    source,
+                    target,
+                    selectedRemote || undefined,
+                  );
+                  await refreshRepoData(selectedRepo);
+                  if (res.has_conflicts || !res.success) {
+                    setError(res.message || 'Pull resulted in conflicts');
+                    return;
+                  }
+                  setDualSync(null);
+                  await proceedIntegration(source, target);
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              onContinueWithoutPull={async () => {
+                const { source, target } = unpulledPrompt;
+                setUnpulledPrompt(null);
+                await proceedIntegration(source, target);
+              }}
+              onCancel={() => setUnpulledPrompt(null)}
+            />
+          )}
 
           {dirtyPrompt && (
             <DirtyModal
               kind={dirtyPrompt.kind}
+              actionLabel={
+                dirtyPrompt.kind === 'integrate' ? getModeLabel(integrationMode) : undefined
+              }
               target={dirtyPrompt.target}
               files={dirtyPrompt.files}
               busy={busy}
-              onStashPop={() =>
-                void executeGuarded(dirtyPrompt.kind, dirtyPrompt.target, { mode: 'stash_and_pop' })
-              }
-              onQuickCommit={(message) =>
-                void executeGuarded(dirtyPrompt.kind, dirtyPrompt.target, {
-                  mode: 'quick_commit',
-                  message,
-                })
-              }
+              onStashPop={() => {
+                if (dirtyPrompt.kind === 'integrate' && dirtyPrompt.integratePair) {
+                  const { source, target } = dirtyPrompt.integratePair;
+                  setDirtyPrompt(null);
+                  void executeIntegrate(source, target, { mode: 'stash_and_pop' });
+                } else {
+                  void executeGuarded(dirtyPrompt.kind, dirtyPrompt.target, {
+                    mode: 'stash_and_pop',
+                  });
+                }
+              }}
+              onQuickCommit={(message) => {
+                if (dirtyPrompt.kind === 'integrate' && dirtyPrompt.integratePair) {
+                  const { source, target } = dirtyPrompt.integratePair;
+                  setDirtyPrompt(null);
+                  void executeIntegrate(source, target, { mode: 'quick_commit', message });
+                } else {
+                  void executeGuarded(dirtyPrompt.kind, dirtyPrompt.target, {
+                    mode: 'quick_commit',
+                    message,
+                  });
+                }
+              }}
               onCancel={() => setDirtyPrompt(null)}
             />
           )}
 
           {protectedPrompt && (
             <PreviewModal
-              actionLabel={protectedPrompt.action === 'merge' ? 'Merge' : 'Push'}
+              actionLabel={
+                protectedPrompt.action === 'merge' ? getModeLabel(integrationMode) : 'Push'
+              }
               preview={protectedPrompt.preview}
               busy={busy}
               onConfirm={async () => {
-                const act = protectedPrompt.action;
+                const { action, source, target } = protectedPrompt;
                 setProtectedPrompt(null);
-                if (act === 'merge') {
-                  if (mergeDir === 'current_into_target') {
-                    await runMergeIntoTarget(mergeTarget, status.branch);
-                  } else {
-                    await executeGuarded('merge', mergeTarget, { mode: 'fail_if_dirty' });
-                  }
+                if (action === 'merge') {
+                  const src = source ?? protectedPrompt.preview.source;
+                  const dst = target ?? protectedPrompt.preview.target;
+                  await executeIntegrate(src, dst, { mode: 'fail_if_dirty' });
                 } else {
                   await runSimple(() => api.push(selectedRepo, selectedRemote || undefined), 'Pushed');
                 }
@@ -556,15 +729,17 @@ export default function App() {
             />
           )}
 
-          {(status.is_merging || status.conflicts.length > 0) && (
+          {(status.is_merging || status.is_rebasing || status.conflicts.length > 0) && (
             <div className="gw-card gw-stack" style={{ borderColor: 'rgba(239, 68, 68, 0.45)' }}>
-              <strong style={{ color: '#fca5a5' }}>Merge Conflict</strong>
+              <strong style={{ color: '#fca5a5' }}>
+                {status.is_rebasing ? 'Rebase Conflict' : 'Merge Conflict'}
+              </strong>
               <ul className="gw-list">
                 {status.conflicts.map((c) => (
                   <li key={c}>{c}</li>
                 ))}
               </ul>
-              <div className="gw-row">
+              <div className="gw-row" style={{ flexWrap: 'wrap' }}>
                 <button
                   className="gw-btn gw-btn-primary"
                   disabled={busy}
@@ -572,13 +747,32 @@ export default function App() {
                 >
                   Send to AI Chat
                 </button>
-                <button
-                  className="gw-btn gw-btn-danger"
-                  disabled={busy}
-                  onClick={() => void runSimple(() => api.abortMerge(selectedRepo))}
-                >
-                  Abort Merge
-                </button>
+                {status.is_rebasing ? (
+                  <>
+                    <button
+                      className="gw-btn gw-btn-ok"
+                      disabled={busy || status.conflicts.length > 0}
+                      onClick={() => void runSimple(() => api.continueRebase(selectedRepo))}
+                    >
+                      Continue Rebase
+                    </button>
+                    <button
+                      className="gw-btn gw-btn-danger"
+                      disabled={busy}
+                      onClick={() => void runSimple(() => api.abortRebase(selectedRepo))}
+                    >
+                      Abort Rebase
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="gw-btn gw-btn-danger"
+                    disabled={busy}
+                    onClick={() => void runSimple(() => api.abortMerge(selectedRepo))}
+                  >
+                    Abort Merge
+                  </button>
+                )}
               </div>
             </div>
           )}

@@ -47,7 +47,11 @@ $LogoSvg = @'
   <path d="M18 10.5c0 4-6 3.5-12 5"/>
 </svg>
 '@
-Set-Content -Path (Join-Path $AssetsDir "logo.svg") -Value $LogoSvg -Encoding UTF8
+function Write-Utf8NoBom($Path, $Content) {
+    [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
+}
+
+Write-Utf8NoBom (Join-Path $AssetsDir "logo.svg") $LogoSvg
 
 $PluginJson = @{
     name        = "git-widget"
@@ -55,7 +59,7 @@ $PluginJson = @{
     description = "Native VS Code-style Git Source Control & Diff Review for Antigravity AUX_PANE"
     logo        = "assets/logo.svg"
 } | ConvertTo-Json -Depth 4
-Set-Content -Path (Join-Path $PluginDir "plugin.json") -Value $PluginJson -Encoding UTF8
+Write-Utf8NoBom (Join-Path $PluginDir "plugin.json") $PluginJson
 
 $SidecarJson = @{
     command           = $TargetExe
@@ -78,7 +82,7 @@ $SidecarJson = @{
         )
     }
 } | ConvertTo-Json -Depth 6
-Set-Content -Path (Join-Path $SidecarDir "sidecar.json") -Value $SidecarJson -Encoding UTF8
+Write-Utf8NoBom (Join-Path $SidecarDir "sidecar.json") $SidecarJson
 
 Write-Host "[git-widget] Installed successfully to $PluginDir" -ForegroundColor Green
 Write-Host "Restart Antigravity 2.0 or open the Git Widget tab in the right auxiliary pane."
