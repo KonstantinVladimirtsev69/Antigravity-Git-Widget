@@ -4,9 +4,10 @@ use crate::{
     error::Result,
     git_cli::{run_git, LOCAL_TIMEOUT_SECS},
     ops::{
-        checkout_branch, commit_all, merge_branch, pull_current, stash_pop, stash_save, OpResult,
+        checkout_branch, commit_all, merge_branch, pull_remote, stash_pop, stash_save, OpResult,
     },
-    status::get_status,
+    status::{get_status, RepoStatus},
+    validation::validate_ref_name,
 };
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -48,7 +49,59 @@ pub fn is_protected_branch(branch: &str) -> bool {
     matches!(branch.trim(), "main" | "master")
 }
 
-/// Executes checkout/pull/merge with a dirty-tree safety guard.
+/// Shared dirty-tree pre-flight guard returning `Ok(Some(blocked_outcome))` or `Ok(None)` with `did_stash` flag.
+pub(crate) async fn prepare_dirty_tree(
+    repo_path: &Path,
+    status: &RepoStatus,
+    strategy: DirtyStrategy,
+) -> Result<(Option<GuardedOpOutcome>, bool)> {
+    if !status.is_dirty {
+        return Ok((None, false));
+    }
+    match strategy {
+        DirtyStrategy::FailIfDirty => {
+            let dirty_files = status.changes.iter().map(|c| c.path.clone()).collect();
+            Ok((
+                Some(GuardedOpOutcome {
+                    blocked_dirty: true,
+                    dirty_files,
+                    op_result: None,
+                    stash_restored: false,
+                }),
+                false,
+            ))
+        }
+        DirtyStrategy::StashAndPop => {
+            stash_save(repo_path, Some("git-widget auto-stash")).await?;
+            Ok((None, true))
+        }
+        DirtyStrategy::QuickCommit { message } => {
+            commit_all(repo_path, &message).await?;
+            Ok((None, false))
+        }
+    }
+}
+
+/// Restores auto-stash when clean, or annotates conflict message when preserved in `stash@{0}`.
+pub(crate) async fn finalize_auto_stash(
+    repo_path: &Path,
+    did_stash: bool,
+    op_res: &mut OpResult,
+) -> Result<bool> {
+    if !did_stash {
+        return Ok(false);
+    }
+    if op_res.success && !op_res.has_conflicts {
+        let pop_res = stash_pop(repo_path).await?;
+        return Ok(pop_res.success);
+    }
+    if op_res.has_conflicts {
+        op_res.message.push_str("\n(Local WIP preserved in stash@{0})");
+    }
+    Ok(false)
+}
+
+/// Executes checkout/pull/merge with a dirty-tree safety guard and automatic stash rollback on error.
 pub async fn run_with_dirty_guard(
     repo_path: &Path,
     kind: GuardedOpKind,
@@ -56,41 +109,28 @@ pub async fn run_with_dirty_guard(
     strategy: DirtyStrategy,
 ) -> Result<GuardedOpOutcome> {
     let status = get_status(repo_path).await?;
-    let mut did_stash = false;
-
-    if status.is_dirty {
-        match strategy {
-            DirtyStrategy::FailIfDirty => {
-                let dirty_files = status.changes.into_iter().map(|c| c.path).collect();
-                return Ok(GuardedOpOutcome {
-                    blocked_dirty: true,
-                    dirty_files,
-                    op_result: None,
-                    stash_restored: false,
-                });
-            }
-            DirtyStrategy::StashAndPop => {
-                stash_save(repo_path, Some("git-widget auto-stash")).await?;
-                did_stash = true;
-            }
-            DirtyStrategy::QuickCommit { message } => {
-                commit_all(repo_path, &message).await?;
-            }
-        }
+    let (blocked, did_stash) = prepare_dirty_tree(repo_path, &status, strategy).await?;
+    if let Some(outcome) = blocked {
+        return Ok(outcome);
     }
 
-    let op_res = match kind {
-        GuardedOpKind::Checkout => checkout_branch(repo_path, target.unwrap_or("")).await?,
-        GuardedOpKind::Pull => pull_current(repo_path).await?,
-        GuardedOpKind::Merge => merge_branch(repo_path, target.unwrap_or("")).await?,
+    let op_attempt = match kind {
+        GuardedOpKind::Checkout => checkout_branch(repo_path, target.unwrap_or("")).await,
+        GuardedOpKind::Pull => pull_remote(repo_path, target).await,
+        GuardedOpKind::Merge => merge_branch(repo_path, target.unwrap_or("")).await,
     };
 
-    let mut stash_restored = false;
-    if did_stash && op_res.success && !op_res.has_conflicts {
-        let pop_res = stash_pop(repo_path).await?;
-        stash_restored = pop_res.success;
-    }
+    let mut op_res = match op_attempt {
+        Ok(res) => res,
+        Err(err) => {
+            if did_stash {
+                let _ = stash_pop(repo_path).await;
+            }
+            return Err(err);
+        }
+    };
 
+    let stash_restored = finalize_auto_stash(repo_path, did_stash, &mut op_res).await?;
     Ok(GuardedOpOutcome {
         blocked_dirty: false,
         dirty_files: Vec::new(),
@@ -101,8 +141,9 @@ pub async fn run_with_dirty_guard(
 
 /// Builds a commit preview before merging `source_branch` into the current branch.
 pub async fn preview_merge(repo_path: &Path, source_branch: &str) -> Result<ActionPreview> {
+    let src = validate_ref_name(source_branch, "source branch")?;
     let status = get_status(repo_path).await?;
-    let range = format!("HEAD..{source_branch}");
+    let range = format!("HEAD..{src}");
     let out = run_git(repo_path, &["log", "--oneline", &range], LOCAL_TIMEOUT_SECS).await?;
     let commits: Vec<String> = out
         .stdout
@@ -113,7 +154,7 @@ pub async fn preview_merge(repo_path: &Path, source_branch: &str) -> Result<Acti
         .collect();
 
     Ok(ActionPreview {
-        source: source_branch.to_string(),
+        source: src.to_string(),
         target: status.branch.clone(),
         is_protected: is_protected_branch(&status.branch),
         commit_count: commits.len(),

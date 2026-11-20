@@ -2,7 +2,8 @@
 
 use crate::{
     config::save_config,
-    routes::{check_auth, map_err, AppState, RepoBody},
+    git_routes::RepoBody,
+    routes::{check_auth, map_err, AppState},
 };
 use axum::{
     extract::State,

@@ -1,26 +1,17 @@
-//! Repository status and branch listing parser.
+//! Repository status, branch tracking, and conflict/rebase marker detection.
 
+pub use crate::status_parser::{BranchTracking, FileChange};
 use crate::{
     error::{CoreError, Result},
     git_cli::{run_git, LOCAL_TIMEOUT_SECS},
+    status_parser::{parse_porcelain_entry, parse_track_counts},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path};
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct BranchTracking {
-    pub upstream: Option<String>,
-    pub ahead: u32,
-    pub behind: u32,
-    pub gone: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FileChange {
-    pub path: String,
-    pub code: String,
-    pub is_conflicted: bool,
-}
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+use tokio::task::JoinSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoStatus {
@@ -41,18 +32,21 @@ pub struct RepoStatus {
     pub branch_tracking: HashMap<String, BranchTracking>,
 }
 
-/// Reads full status (`git status --porcelain=v2 --branch`) and branch list.
+/// Reads full status (`git status --porcelain=v2 --branch`) and branch list concurrently.
 pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
-    if !repo_path.join(".git").exists() {
+    let dot_git = repo_path.join(".git");
+    if !dot_git.exists() {
         return Err(CoreError::NotAGitRepo(repo_path.to_string_lossy().to_string()));
     }
 
-    let status_out = run_git(
-        repo_path,
-        &["status", "--porcelain=v2", "--branch"],
-        LOCAL_TIMEOUT_SECS,
-    )
-    .await?;
+    let (status_res, remotes, branches_res, git_dir) = tokio::join!(
+        run_git(repo_path, &["status", "--porcelain=v2", "--branch"], LOCAL_TIMEOUT_SECS),
+        list_remotes(repo_path),
+        list_branches(repo_path),
+        resolve_git_dir(repo_path, &dot_git),
+    );
+    let status_out = status_res?;
+    let (local_branches, remote_branches, mut branch_tracking) = branches_res?;
 
     let mut branch = String::from("HEAD");
     let mut upstream = None;
@@ -108,11 +102,9 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
         }
     }
 
-    let remotes = list_remotes(repo_path).await;
-    let (local_branches, remote_branches, mut branch_tracking) = list_branches(repo_path).await?;
     fill_fallback_tracking(repo_path, &local_branches, &remote_branches, &remotes, &mut branch_tracking).await;
-    let is_merging = is_merge_in_progress(repo_path).await;
-    let is_rebasing = is_rebase_in_progress(repo_path).await;
+    let is_merging = git_dir.join("MERGE_HEAD").exists();
+    let is_rebasing = git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists();
     let is_dirty = !changes.is_empty();
 
     Ok(RepoStatus {
@@ -134,115 +126,57 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
     })
 }
 
-fn parse_porcelain_entry(line: &str) -> Option<FileChange> {
-    if let Some(rest) = line.strip_prefix("u ") {
-        let mut parts = rest.splitn(10, ' ');
-        let xy = parts.next()?.to_string();
-        let path = parts.nth(8)?.to_string();
-        return Some(FileChange {
-            path,
-            code: xy,
-            is_conflicted: true,
-        });
+async fn resolve_git_dir(repo_path: &Path, dot_git: &Path) -> PathBuf {
+    if dot_git.is_dir() {
+        return dot_git.to_path_buf();
     }
-    if let Some(rest) = line.strip_prefix("1 ") {
-        let mut parts = rest.splitn(8, ' ');
-        let xy = parts.next()?.to_string();
-        let path = parts.nth(6)?.to_string();
-        return Some(FileChange {
-            path,
-            code: xy,
-            is_conflicted: false,
-        });
-    }
-    if let Some(rest) = line.strip_prefix("2 ") {
-        let mut parts = rest.splitn(9, ' ');
-        let xy = parts.next()?.to_string();
-        let path_tab = parts.nth(7)?;
-        let path = path_tab.split('\t').next().unwrap_or(path_tab).to_string();
-        return Some(FileChange {
-            path,
-            code: xy,
-            is_conflicted: false,
-        });
-    }
-    if let Some(path) = line.strip_prefix("? ") {
-        return Some(FileChange {
-            path: path.to_string(),
-            code: "??".to_string(),
-            is_conflicted: false,
-        });
-    }
-    None
-}
-
-fn parse_track_counts(track: &str) -> (u32, u32, bool) {
-    let mut ahead = 0u32;
-    let mut behind = 0u32;
-    let mut gone = false;
-    for seg in track.split(',') {
-        let s = seg.trim();
-        if s == "gone" {
-            gone = true;
-        } else if let Some(n) = s.strip_prefix("ahead ") {
-            ahead = n.trim().parse().unwrap_or(0);
-        } else if let Some(n) = s.strip_prefix("behind ") {
-            behind = n.trim().parse().unwrap_or(0);
+    if let Ok(out) = run_git(repo_path, &["rev-parse", "--git-dir"], LOCAL_TIMEOUT_SECS).await {
+        let p = PathBuf::from(out.stdout.trim());
+        if p.is_absolute() {
+            return p;
         }
+        return repo_path.join(p);
     }
-    (ahead, behind, gone)
+    dot_git.to_path_buf()
 }
 
 async fn list_branches(
     repo_path: &Path,
 ) -> Result<(Vec<String>, Vec<String>, HashMap<String, BranchTracking>)> {
-    let local_out = run_git(
-        repo_path,
-        &[
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track,nobracket)",
-            "refs/heads",
-        ],
-        LOCAL_TIMEOUT_SECS,
-    )
-    .await?;
-
-    let remote_out = run_git(
-        repo_path,
-        &[
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:short)",
-            "refs/remotes",
-        ],
-        LOCAL_TIMEOUT_SECS,
-    )
-    .await?;
+    let (local_res, remote_res) = tokio::join!(
+        run_git(
+            repo_path,
+            &[
+                "for-each-ref",
+                "--sort=-committerdate",
+                "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track,nobracket)",
+                "refs/heads",
+            ],
+            LOCAL_TIMEOUT_SECS,
+        ),
+        run_git(
+            repo_path,
+            &["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/remotes"],
+            LOCAL_TIMEOUT_SECS,
+        ),
+    );
+    let local_out = local_res?;
+    let remote_out = remote_res?;
 
     let mut local = Vec::new();
     let mut tracking = HashMap::new();
-    for line in local_out.stdout.lines() {
-        let trimmed = line.trim_end();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let mut parts = trimmed.splitn(3, '\t');
+    for line in local_out.stdout.lines().map(str::trim_end).filter(|l| !l.is_empty()) {
+        let mut parts = line.splitn(3, '\t');
         let name = parts.next().unwrap_or("").trim().to_string();
         if name.is_empty() {
             continue;
         }
         let up_raw = parts.next().unwrap_or("").trim();
-        let track_raw = parts.next().unwrap_or("").trim();
-        let (ahead, behind, gone) = parse_track_counts(track_raw);
+        let (ahead, behind, gone) = parse_track_counts(parts.next().unwrap_or("").trim());
         tracking.insert(
             name.clone(),
             BranchTracking {
-                upstream: if up_raw.is_empty() {
-                    None
-                } else {
-                    Some(up_raw.to_string())
-                },
+                upstream: (!up_raw.is_empty()).then(|| up_raw.to_string()),
                 ahead,
                 behind,
                 gone,
@@ -251,14 +185,13 @@ async fn list_branches(
         local.push(name);
     }
 
-    let remote: Vec<String> = remote_out
+    let remote = remote_out
         .stdout
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && l.contains('/') && !l.ends_with("/HEAD"))
         .map(ToString::to_string)
         .collect();
-
     Ok((local, remote, tracking))
 }
 
@@ -269,18 +202,12 @@ async fn fill_fallback_tracking(
     remotes: &[String],
     tracking: &mut HashMap<String, BranchTracking>,
 ) {
-    let primary_remote = if remotes.iter().any(|r| r == "origin") {
-        Some("origin")
-    } else {
-        remotes.first().map(String::as_str)
-    };
-    let Some(rem) = primary_remote else {
+    let Some(rem) = remotes.iter().find(|r| *r == "origin").or_else(|| remotes.first()) else {
         return;
     };
+    let mut set = JoinSet::new();
     for branch in local_branches {
-        let Some(entry) = tracking.get_mut(branch) else {
-            continue;
-        };
+        let Some(entry) = tracking.get(branch) else { continue };
         if entry.upstream.is_some() {
             continue;
         }
@@ -288,18 +215,22 @@ async fn fill_fallback_tracking(
         if !remote_branches.iter().any(|rb| rb == &candidate) {
             continue;
         }
-        let spec = format!("{branch}...{candidate}");
-        if let Ok(out) = run_git(
-            repo_path,
-            &["rev-list", "--left-right", "--count", &spec],
-            LOCAL_TIMEOUT_SECS,
-        )
-        .await
-        {
+        let repo = repo_path.to_path_buf();
+        let b_name = branch.clone();
+        set.spawn(async move {
+            let spec = format!("{b_name}...{candidate}");
+            let out = run_git(&repo, &["rev-list", "--left-right", "--count", &spec], LOCAL_TIMEOUT_SECS).await.ok()?;
             let mut nums = out.stdout.split_whitespace();
-            if let (Some(a), Some(b)) = (nums.next(), nums.next()) {
-                entry.ahead = a.parse().unwrap_or(0);
-                entry.behind = b.parse().unwrap_or(0);
+            let a = nums.next()?.parse().unwrap_or(0);
+            let b = nums.next()?.parse().unwrap_or(0);
+            Some((b_name, a, b))
+        });
+    }
+    while let Some(res) = set.join_next().await {
+        if let Ok(Some((b_name, a, b))) = res {
+            if let Some(entry) = tracking.get_mut(&b_name) {
+                entry.ahead = a;
+                entry.behind = b;
             }
         }
     }
@@ -316,40 +247,4 @@ async fn list_remotes(repo_path: &Path) -> Vec<String> {
             .collect(),
         Err(_) => Vec::new(),
     }
-}
-
-async fn is_merge_in_progress(repo_path: &Path) -> bool {
-    run_git(
-        repo_path,
-        &["rev-parse", "--verify", "--quiet", "MERGE_HEAD"],
-        LOCAL_TIMEOUT_SECS,
-    )
-    .await
-    .is_ok()
-}
-
-async fn is_rebase_in_progress(repo_path: &Path) -> bool {
-    for marker in ["rebase-merge", "rebase-apply"] {
-        if let Ok(out) = run_git(
-            repo_path,
-            &["rev-parse", "--git-path", marker],
-            LOCAL_TIMEOUT_SECS,
-        )
-        .await
-        {
-            let p = out.stdout.trim();
-            if !p.is_empty() {
-                let candidate = Path::new(p);
-                let resolved = if candidate.is_absolute() {
-                    candidate.to_path_buf()
-                } else {
-                    repo_path.join(candidate)
-                };
-                if resolved.exists() {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }

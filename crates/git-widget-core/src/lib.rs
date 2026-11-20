@@ -2,9 +2,11 @@
 
 pub mod branches;
 pub mod diff;
+pub mod diff_parser;
 pub mod error;
 pub mod git_cli;
 pub mod github;
+pub mod github_prs;
 pub mod graph;
 pub mod integrate;
 pub mod ops;
@@ -12,7 +14,9 @@ pub mod safety;
 pub mod scanner;
 pub mod stash;
 pub mod status;
+pub mod status_parser;
 pub mod sync;
+pub mod validation;
 
 pub use error::{CoreError, Result};
 

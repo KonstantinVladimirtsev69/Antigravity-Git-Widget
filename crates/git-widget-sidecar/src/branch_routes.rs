@@ -1,6 +1,9 @@
 //! Branch CRUD, Stash manager, bulk staging, and commit action routes.
 
-use crate::routes::{check_auth, map_err, AppState, RepoBody, RepoQuery};
+use crate::{
+    git_routes::RepoBody,
+    routes::{check_auth, map_err, AppState, RepoQuery},
+};
 use axum::{
     extract::{Query, State},
     http::HeaderMap,

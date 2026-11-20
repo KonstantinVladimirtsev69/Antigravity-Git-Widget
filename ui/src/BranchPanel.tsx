@@ -124,15 +124,7 @@ export function BranchPanel({
             }}
           />
         </div>
-        <button
-          type="button"
-          className="gw-btn"
-          title="New branch"
-          disabled={busy}
-          onClick={() => setBranchMode((m) => (m === 'create' ? 'none' : 'create'))}
-        >
-          +
-        </button>
+        <button type="button" className="gw-btn" title="New branch" disabled={busy} onClick={() => setBranchMode((m) => (m === 'create' ? 'none' : 'create'))}>+</button>
         <button
           type="button"
           className="gw-btn"

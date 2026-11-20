@@ -14,11 +14,12 @@ pub struct GitOutput {
     pub stderr: String,
 }
 
-/// Executes `git -C <repo_path> <args...>` with `GIT_TERMINAL_PROMPT=0` and a timeout.
+/// Executes `git -C <repo_path> -c core.quotePath=false <args...>` with `GIT_TERMINAL_PROMPT=0` and a timeout.
 pub async fn run_git_raw(repo_path: &Path, args: &[&str], timeout_secs: u64) -> Result<GitOutput> {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(repo_path)
+        .args(["-c", "core.quotePath=false"])
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("LC_MESSAGES", "C")

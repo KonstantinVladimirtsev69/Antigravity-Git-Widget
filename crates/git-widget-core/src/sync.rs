@@ -4,7 +4,8 @@ use crate::{
     error::{CoreError, Result},
     git_cli::{run_git_raw, NETWORK_TIMEOUT_SECS},
     ops::{checkout_branch, fetch_remote, pull_remote, OpResult},
-    status::{get_status, BranchTracking},
+    status::{get_status, BranchTracking, RepoStatus},
+    validation::validate_ref_name,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -24,14 +25,6 @@ pub struct DualBranchSync {
     pub target: BranchSyncState,
     pub any_behind: bool,
     pub fetch_error: Option<String>,
-}
-
-pub(crate) fn validate_branch(val: &str, field: &str) -> Result<String> {
-    let trimmed = val.trim();
-    if trimmed.is_empty() || trimmed.contains(' ') || trimmed.starts_with('-') {
-        return Err(CoreError::InvalidInput(format!("invalid {field}: '{val}'")));
-    }
-    Ok(trimmed.to_string())
 }
 
 fn state_from_tracking(branch: &str, tracking: Option<&BranchTracking>) -> BranchSyncState {
@@ -61,15 +54,15 @@ pub async fn scan_integration_sync(
     remote: Option<&str>,
     do_fetch: bool,
 ) -> Result<DualBranchSync> {
-    let src = validate_branch(source, "source branch")?;
-    let dst = validate_branch(target, "target branch")?;
+    let src = validate_ref_name(source, "source branch")?.to_string();
+    let dst = validate_ref_name(target, "target branch")?.to_string();
 
     let mut fetch_error = None;
     if do_fetch {
-        let st_pre = get_status(repo_path).await?;
-        if !st_pre.remotes.is_empty() {
-            if let Err(e) = fetch_remote(repo_path, remote).await {
-                fetch_error = Some(e.to_string());
+        if let Err(e) = fetch_remote(repo_path, remote).await {
+            let err_text = e.to_string();
+            if !err_text.contains("No such remote") && !err_text.contains("does not appear to be a git repository") {
+                fetch_error = Some(err_text);
             }
         }
     }
@@ -114,26 +107,20 @@ fn resolve_remote_and_branch<'a>(
     None
 }
 
-/// Pulls a single branch. If not currently checked out and strictly behind (`ahead == 0`),
-/// fast-forwards via `git fetch <remote> <remote_branch>:<local_branch>` without touching the working tree.
-pub async fn pull_branch(
+async fn pull_branch_with_status(
     repo_path: &Path,
     branch: &str,
     remote: Option<&str>,
+    st: &RepoStatus,
 ) -> Result<OpResult> {
-    let branch = validate_branch(branch, "branch")?;
-    let st = get_status(repo_path).await?;
     if st.remotes.is_empty() {
-        return Err(CoreError::InvalidInput(
-            "No git remote configured. Add a remote first.".to_string(),
-        ));
+        return Err(CoreError::InvalidInput("No git remote configured. Add a remote first.".to_string()));
     }
-
     if branch == st.branch {
         return pull_remote(repo_path, remote).await;
     }
 
-    let tracking = st.branch_tracking.get(&branch);
+    let tracking = st.branch_tracking.get(branch);
     let behind = tracking.map(|t| t.behind).unwrap_or(0);
     let ahead = tracking.map(|t| t.ahead).unwrap_or(0);
     if behind == 0 {
@@ -145,7 +132,7 @@ pub async fn pull_branch(
     }
 
     let Some((rem, rem_branch)) =
-        resolve_remote_and_branch(&branch, tracking, remote, &st.remotes, &st.remote_branches)
+        resolve_remote_and_branch(branch, tracking, remote, &st.remotes, &st.remote_branches)
     else {
         return Err(CoreError::InvalidInput(format!(
             "Branch '{branch}' has no upstream or matching remote branch."
@@ -162,10 +149,7 @@ pub async fn pull_branch(
                 has_conflicts: false,
             });
         }
-        return Err(CoreError::GitFailed {
-            code: out.code,
-            stderr: out.stderr.trim().to_string(),
-        });
+        return Err(CoreError::GitFailed { code: out.code, stderr: out.stderr.trim().to_string() });
     }
 
     if st.is_dirty {
@@ -174,7 +158,7 @@ pub async fn pull_branch(
         )));
     }
     let original = st.branch.clone();
-    checkout_branch(repo_path, &branch).await?;
+    checkout_branch(repo_path, branch).await?;
     match pull_remote(repo_path, Some(&rem)).await {
         Ok(res) if res.success && !res.has_conflicts => {
             checkout_branch(repo_path, &original).await?;
@@ -188,6 +172,13 @@ pub async fn pull_branch(
     }
 }
 
+/// Pulls a single branch (fast-forwarding non-current branches via refspec when `ahead == 0`).
+pub async fn pull_branch(repo_path: &Path, branch: &str, remote: Option<&str>) -> Result<OpResult> {
+    let branch = validate_ref_name(branch, "branch")?;
+    let st = get_status(repo_path).await?;
+    pull_branch_with_status(repo_path, branch, remote, &st).await
+}
+
 /// Fetches latest remote refs, then pulls any unpulled (`behind > 0`) commits on `source` and `target`.
 pub async fn pull_both_branches(
     repo_path: &Path,
@@ -195,30 +186,41 @@ pub async fn pull_both_branches(
     target: &str,
     remote: Option<&str>,
 ) -> Result<OpResult> {
-    let sync = scan_integration_sync(repo_path, source, target, remote, true).await?;
-    let mut messages = Vec::new();
-    let st = get_status(repo_path).await?;
+    let src = validate_ref_name(source, "source branch")?.to_string();
+    let dst = validate_ref_name(target, "target branch")?.to_string();
 
-    let mut order = Vec::new();
-    if sync.source.branch != st.branch {
-        order.push(sync.source.clone());
-        if sync.target.branch != sync.source.branch {
-            order.push(sync.target.clone());
+    if let Err(e) = fetch_remote(repo_path, remote).await {
+        let text = e.to_string();
+        if text.contains("No git remote") {
+            return Err(e);
         }
-    } else {
-        if sync.target.branch != sync.source.branch {
-            order.push(sync.target.clone());
-        }
-        order.push(sync.source.clone());
     }
 
-    for item in order {
-        if item.behind > 0 {
-            let res = pull_branch(repo_path, &item.branch, remote).await?;
+    let st = get_status(repo_path).await?;
+    let src_behind = st.branch_tracking.get(&src).map(|t| t.behind).unwrap_or(0);
+    let dst_behind = st.branch_tracking.get(&dst).map(|t| t.behind).unwrap_or(0);
+
+    let mut order = Vec::new();
+    if src != st.branch {
+        order.push((src.clone(), src_behind));
+        if dst != src {
+            order.push((dst.clone(), dst_behind));
+        }
+    } else {
+        if dst != src {
+            order.push((dst.clone(), dst_behind));
+        }
+        order.push((src.clone(), src_behind));
+    }
+
+    let mut messages = Vec::new();
+    for (branch, behind) in order {
+        if behind > 0 {
+            let res = pull_branch_with_status(repo_path, &branch, remote, &st).await?;
             if res.has_conflicts || !res.success {
                 return Ok(res);
             }
-            messages.push(format!("{}: pulled ↓{}", item.branch, item.behind));
+            messages.push(format!("{branch}: pulled ↓{behind}"));
         }
     }
 
@@ -230,9 +232,5 @@ pub async fn pull_both_branches(
         });
     }
 
-    Ok(OpResult {
-        success: true,
-        message: messages.join(" · "),
-        has_conflicts: false,
-    })
+    Ok(OpResult { success: true, message: messages.join(" · "), has_conflicts: false })
 }

@@ -1,12 +1,13 @@
 //! Commit graph, commit file details, author stats, and GitHub URL/PR helpers.
 
+pub use crate::github_prs::{list_github_prs, PrListResponse, PullRequestInfo};
 use crate::{
     error::{CoreError, Result},
     git_cli::{run_git_raw, LOCAL_TIMEOUT_SECS},
+    validation::{validate_git_arg, validate_ref_name},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path, process::Stdio};
-use tokio::process::Command;
+use std::{collections::HashMap, path::Path};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RefDecoration {
@@ -58,24 +59,6 @@ pub struct CommitDetails {
     pub total_deletions: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PullRequestInfo {
-    pub number: u64,
-    pub title: String,
-    pub author: String,
-    pub head_ref: String,
-    pub base_ref: String,
-    pub url: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PrListResponse {
-    pub gh_available: bool,
-    pub github_url: Option<String>,
-    pub prs: Vec<PullRequestInfo>,
-}
-
 /// Converts a GitHub SSH or HTTPS remote URL into a web base URL (`https://github.com/owner/repo`).
 pub fn remote_to_github_url(remote_url: &str) -> Option<String> {
     let trimmed = remote_url.trim().trim_end_matches('/').trim_end_matches(".git");
@@ -113,41 +96,43 @@ pub async fn get_github_url(repo_path: &Path) -> Option<String> {
     None
 }
 
-/// Loads commit graph with parent hashes, branch/tag decorations, and author statistics.
+/// Loads commit graph with parent hashes, decorations, and full author statistics.
+/// Author filtering happens in Rust after collecting `authors` so the filter bar never loses chips.
 pub async fn get_commit_graph(
     repo_path: &Path,
     all_branches: bool,
     author_filter: Option<&str>,
     limit: usize,
 ) -> Result<GraphResponse> {
-    let limit_arg = format!("-n{limit}");
-    let mut args: Vec<String> = vec![
-        "log".into(),
-        "--topo-order".into(),
-        limit_arg,
-        "--date=format:%Y-%m-%d %H:%M".into(),
-        "--format=%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%cr%x1f%cd%x1f%D".into(),
+    let author_exact = match author_filter.map(str::trim).filter(|a| !a.is_empty()) {
+        Some(a) => Some(validate_git_arg(a, "author filter")?.to_string()),
+        None => None,
+    };
+
+    let fetch_limit = if author_exact.is_some() { limit.max(200) } else { limit };
+    let limit_arg = format!("-n{fetch_limit}");
+    let mut args: Vec<&str> = vec![
+        "log",
+        "--topo-order",
+        &limit_arg,
+        "--date=format:%Y-%m-%d %H:%M",
+        "--format=%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%cr%x1f%cd%x1f%D",
     ];
     if all_branches {
-        args.push("--all".into());
-    }
-    if let Some(author) = author_filter.filter(|a| !a.trim().is_empty()) {
-        args.push(format!("--author={}", author.trim()));
+        args.push("--all");
     }
 
-    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let out = run_git_raw(repo_path, &arg_refs, LOCAL_TIMEOUT_SECS).await?;
-    let github_url = get_github_url(repo_path).await;
+    let (log_res, github_url) = tokio::join!(
+        run_git_raw(repo_path, &args, LOCAL_TIMEOUT_SECS),
+        get_github_url(repo_path),
+    );
+    let out = log_res?;
 
     if !out.success {
-        return Ok(GraphResponse {
-            commits: Vec::new(),
-            authors: Vec::new(),
-            github_url,
-        });
+        return Ok(GraphResponse { commits: Vec::new(), authors: Vec::new(), github_url });
     }
 
-    let mut commits = Vec::new();
+    let mut all_commits = Vec::new();
     let mut author_map: HashMap<String, (usize, String)> = HashMap::new();
 
     for line in out.stdout.lines() {
@@ -155,11 +140,7 @@ pub async fn get_commit_graph(
         if parts.len() < 9 {
             continue;
         }
-        let parents: Vec<String> = parts[2]
-            .split_whitespace()
-            .filter(|s| !s.is_empty())
-            .map(ToString::to_string)
-            .collect();
+        let parents = parts[2].split_whitespace().filter(|s| !s.is_empty()).map(ToString::to_string).collect();
         let (refs, is_head) = parse_decorations(parts[8]);
         let author_name = parts[4].to_string();
         let date_rel = parts[6].to_string();
@@ -169,7 +150,7 @@ pub async fn get_commit_graph(
             .and_modify(|e| e.0 += 1)
             .or_insert((1, date_rel.clone()));
 
-        commits.push(GraphCommit {
+        all_commits.push(GraphCommit {
             hash: parts[0].to_string(),
             short_hash: parts[1].to_string(),
             parents,
@@ -185,19 +166,16 @@ pub async fn get_commit_graph(
 
     let mut authors: Vec<AuthorStat> = author_map
         .into_iter()
-        .map(|(name, (count, last_date))| AuthorStat {
-            name,
-            count,
-            last_date,
-        })
+        .map(|(name, (count, last_date))| AuthorStat { name, count, last_date })
         .collect();
     authors.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
 
-    Ok(GraphResponse {
-        commits,
-        authors,
-        github_url,
-    })
+    let commits: Vec<GraphCommit> = match author_exact {
+        Some(ref target) => all_commits.into_iter().filter(|c| &c.author_name == target).take(limit).collect(),
+        None => all_commits.into_iter().take(limit).collect(),
+    };
+
+    Ok(GraphResponse { commits, authors, github_url })
 }
 
 fn parse_decorations(raw: &str) -> (Vec<RefDecoration>, bool) {
@@ -206,29 +184,17 @@ fn parse_decorations(raw: &str) -> (Vec<RefDecoration>, bool) {
     for item in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         if let Some(branch) = item.strip_prefix("HEAD -> ") {
             is_head = true;
-            refs.push(RefDecoration {
-                name: branch.trim().to_string(),
-                kind: "head".to_string(),
-            });
+            refs.push(RefDecoration { name: branch.trim().to_string(), kind: "head".to_string() });
         } else if item == "HEAD" {
             is_head = true;
         } else if let Some(tag) = item.strip_prefix("tag: ") {
-            refs.push(RefDecoration {
-                name: tag.trim().to_string(),
-                kind: "tag".to_string(),
-            });
+            refs.push(RefDecoration { name: tag.trim().to_string(), kind: "tag".to_string() });
         } else if item.ends_with("/HEAD") {
             continue;
         } else if item.contains('/') {
-            refs.push(RefDecoration {
-                name: item.to_string(),
-                kind: "remote".to_string(),
-            });
+            refs.push(RefDecoration { name: item.to_string(), kind: "remote".to_string() });
         } else {
-            refs.push(RefDecoration {
-                name: item.to_string(),
-                kind: "local".to_string(),
-            });
+            refs.push(RefDecoration { name: item.to_string(), kind: "local".to_string() });
         }
     }
     (refs, is_head)
@@ -236,37 +202,34 @@ fn parse_decorations(raw: &str) -> (Vec<RefDecoration>, bool) {
 
 /// Returns per-file change statistics for a single commit.
 pub async fn get_commit_details(repo_path: &Path, commit_hash: &str) -> Result<CommitDetails> {
-    if commit_hash.trim().is_empty() {
-        return Err(CoreError::InvalidInput("commit hash cannot be empty".into()));
+    let hash = validate_ref_name(commit_hash, "commit hash")?;
+    let args_status = ["show", "--name-status", "--format=", hash];
+    let args_numstat = ["show", "--numstat", "--format=", hash];
+    let (status_res, numstat_res) = tokio::join!(
+        run_git_raw(repo_path, &args_status, LOCAL_TIMEOUT_SECS),
+        run_git_raw(repo_path, &args_numstat, LOCAL_TIMEOUT_SECS),
+    );
+    let status_out = status_res?;
+    let numstat_out = numstat_res?;
+    if !status_out.success && !numstat_out.success {
+        return Err(CoreError::GitFailed {
+            code: status_out.code,
+            stderr: status_out.stderr.trim().to_string(),
+        });
     }
-    let hash = commit_hash.trim();
-    let status_out = run_git_raw(
-        repo_path,
-        &["show", "--name-status", "--format=", hash],
-        LOCAL_TIMEOUT_SECS,
-    )
-    .await?;
-    let numstat_out = run_git_raw(
-        repo_path,
-        &["show", "--numstat", "--format=", hash],
-        LOCAL_TIMEOUT_SECS,
-    )
-    .await?;
 
     let mut status_map: HashMap<String, String> = HashMap::new();
     for line in status_out.stdout.lines().filter(|l| !l.trim().is_empty()) {
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() >= 2 {
             let code = parts[0].chars().next().unwrap_or('M').to_string();
-            let path = parts.last().unwrap().to_string();
-            status_map.insert(path, code);
+            status_map.insert(parts.last().unwrap().to_string(), code);
         }
     }
 
     let mut files = Vec::new();
     let mut total_additions = 0usize;
     let mut total_deletions = 0usize;
-
     for line in numstat_out.stdout.lines().filter(|l| !l.trim().is_empty()) {
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() < 3 {
@@ -278,96 +241,8 @@ pub async fn get_commit_details(repo_path: &Path, commit_hash: &str) -> Result<C
         let status = status_map.get(&path).cloned().unwrap_or_else(|| "M".into());
         total_additions += additions;
         total_deletions += deletions;
-        files.push(CommitFileStat {
-            path,
-            status,
-            additions,
-            deletions,
-        });
+        files.push(CommitFileStat { path, status, additions, deletions });
     }
 
-    Ok(CommitDetails {
-        hash: hash.to_string(),
-        files,
-        total_additions,
-        total_deletions,
-    })
-}
-
-/// Lists open GitHub PRs via `gh` CLI when available, gracefully degrading otherwise.
-pub async fn list_github_prs(repo_path: &Path) -> PrListResponse {
-    let github_url = get_github_url(repo_path).await;
-    let mut cmd = Command::new("gh");
-    cmd.current_dir(repo_path)
-        .args([
-            "pr",
-            "list",
-            "--limit",
-            "15",
-            "--json",
-            "number,title,author,headRefName,baseRefName,url,updatedAt",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    #[cfg(windows)]
-    cmd.creation_flags(0x0800_0000);
-
-    let Ok(out) = cmd.output().await else {
-        return PrListResponse {
-            gh_available: false,
-            github_url,
-            prs: Vec::new(),
-        };
-    };
-    if !out.status.success() {
-        return PrListResponse {
-            gh_available: false,
-            github_url,
-            prs: Vec::new(),
-        };
-    }
-
-    let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
-        return PrListResponse {
-            gh_available: true,
-            github_url,
-            prs: Vec::new(),
-        };
-    };
-
-    let prs = val
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|item| {
-                    Some(PullRequestInfo {
-                        number: item.get("number")?.as_u64()?,
-                        title: item.get("title")?.as_str()?.to_string(),
-                        author: item
-                            .get("author")
-                            .and_then(|a| a.get("login"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                        head_ref: item.get("headRefName")?.as_str()?.to_string(),
-                        base_ref: item.get("baseRefName")?.as_str()?.to_string(),
-                        url: item.get("url")?.as_str()?.to_string(),
-                        updated_at: item
-                            .get("updatedAt")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    PrListResponse {
-        gh_available: true,
-        github_url,
-        prs,
-    }
+    Ok(CommitDetails { hash: hash.to_string(), files, total_additions, total_deletions })
 }

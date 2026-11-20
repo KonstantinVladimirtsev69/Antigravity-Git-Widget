@@ -32,6 +32,7 @@ export interface ScannerConfig {
   roots: string[];
   max_depth: number;
   github_token?: string | null;
+  has_github_token?: boolean;
   integration_mode?: IntegrationMode;
 }
 

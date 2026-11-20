@@ -124,10 +124,13 @@ async fn create_via_curl_api(
     })
     .to_string();
 
-    let auth_header = format!("Authorization: Bearer {token}");
+    let sanitized = token.replace(['\r', '\n', '"'], "");
+    let cfg_stdin = format!("header = \"Authorization: Bearer {sanitized}\"\n");
     let mut cmd = Command::new("curl.exe");
     cmd.args([
         "-sS",
+        "-K",
+        "-",
         "-X",
         "POST",
         "https://api.github.com/user/repos",
@@ -135,19 +138,21 @@ async fn create_via_curl_api(
         "Accept: application/vnd.github+json",
         "-H",
         "User-Agent: antigravity-git-widget",
-        "-H",
-        &auth_header,
         "-d",
         &body,
     ])
-    .stdin(Stdio::null())
+    .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
 
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000);
 
-    let out = cmd.output().await?;
+    let mut child = cmd.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(cfg_stdin.as_bytes()).await?;
+    }
+    let out = child.wait_with_output().await?;
     if !out.status.success() {
         return Err(CoreError::GitFailed {
             code: out.status.code().unwrap_or(-1),

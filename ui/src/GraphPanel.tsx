@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { api } from './api';
 import { layoutGraph } from './graphLayout';
 import type { AuthorStat, CommitDetails, GraphCommit } from './types';
+import { splitPath, statusClass } from './utils/fileHelpers';
 
 interface GraphPanelProps {
   repo: string;
@@ -16,20 +17,6 @@ interface GraphPanelProps {
   onCherryPick: (hash: string) => void;
   onInspectCommit: (hash: string, focusFile?: string) => void;
   onNotify: (msg: string) => void;
-}
-
-function splitPath(fullPath: string): { name: string; dir: string } {
-  const norm = fullPath.replace(/\\/g, '/');
-  const idx = norm.lastIndexOf('/');
-  if (idx === -1) return { name: norm, dir: '' };
-  return { name: norm.slice(idx + 1), dir: norm.slice(0, idx) };
-}
-
-function statusClass(code: string): string {
-  const ch = code.charAt(0).toUpperCase();
-  if (ch === 'A' || ch === 'U' || ch === '?') return 'gw-st-add';
-  if (ch === 'D') return 'gw-st-del';
-  return 'gw-st-mod';
 }
 
 export function GraphPanel({
@@ -52,6 +39,15 @@ export function GraphPanel({
   const [loadingHash, setLoadingHash] = useState<string | null>(null);
 
   const rows = useMemo(() => layoutGraph(commits), [commits]);
+
+  const displayedAuthors = useMemo(() => {
+    const top = authors.slice(0, 6);
+    if (authorFilter && !top.some((a) => a.name === authorFilter)) {
+      const matched = authors.find((a) => a.name === authorFilter);
+      top.push(matched ?? { name: authorFilter, count: commits.length, last_date: '' });
+    }
+    return top;
+  }, [authors, authorFilter, commits.length]);
 
   const toggleCommit = async (hash: string) => {
     if (expandedHash === hash) {
@@ -100,7 +96,7 @@ export function GraphPanel({
 
       {open && (
         <>
-          {authors.length > 1 && (
+          {(authors.length > 1 || Boolean(authorFilter)) && (
             <div className="gw-row" style={{ flexWrap: 'wrap', gap: 4 }}>
               <button
                 type="button"
@@ -109,12 +105,12 @@ export function GraphPanel({
               >
                 All devs
               </button>
-              {authors.slice(0, 6).map((a) => (
+              {displayedAuthors.map((a) => (
                 <button
                   key={a.name}
                   type="button"
                   className={`gw-chip ${authorFilter === a.name ? 'active' : ''}`}
-                  title={`${a.name} · ${a.count} commits · last ${a.last_date}`}
+                  title={`${a.name} · ${a.count} commits${a.last_date ? ` · last ${a.last_date}` : ''}`}
                   onClick={() => onAuthorFilter(authorFilter === a.name ? '' : a.name)}
                 >
                   {a.name.split(' ')[0]} <span className="gw-muted">{a.count}</span>

@@ -3,10 +3,12 @@
 mod branch_routes;
 mod config;
 mod diff_routes;
+mod git_routes;
 mod graph_routes;
 mod installer;
 mod integrate_routes;
 mod routes;
+mod workspace;
 
 use axum::{
     http::{header, StatusCode, Uri},
@@ -31,13 +33,13 @@ use integrate_routes::{
     abort_rebase_handler, continue_rebase_handler, integrate_handler, preview_integrate_handler,
     pull_both_handler, save_integration_mode_handler, scan_sync_handler,
 };
-use routes::{
-    abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, get_repos,
-    guarded_handler, init_config, init_repo_handler, post_config, preview_merge_handler,
-    preview_push_handler, publish_handler, pull_handler, push_handler, resolve_workspace,
-    send_conflict_to_chat_handler, stash_pop_handler, stash_save_handler, status_handler,
-    AppState,
+use git_routes::{
+    abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, guarded_handler,
+    init_repo_handler, preview_merge_handler, preview_push_handler, publish_handler, pull_handler,
+    push_handler, send_conflict_to_chat_handler, stash_pop_handler, stash_save_handler,
 };
+use routes::{get_repos, init_config, post_config, status_handler, AppState};
+use workspace::resolve_workspace;
 use rust_embed::Embed;
 use std::{net::SocketAddr, sync::Arc};
 

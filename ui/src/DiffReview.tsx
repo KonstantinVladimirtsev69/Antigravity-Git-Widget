@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CONVERSATION_ID, api } from './api';
-import { Picker } from './Picker';
+import { DiffAskAiBox } from './components/DiffAskAiBox';
+import { DiffModeBar } from './components/DiffModeBar';
 import type { CommitInfo, DiffFile, DiffHunk } from './types';
 
 interface DiffReviewProps {
@@ -36,6 +37,15 @@ export function DiffReview({
   const [askTarget, setAskTarget] = useState<{ file: string; snippet: string } | null>(null);
   const [question, setQuestion] = useState('');
   const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (!focusFile) return;
+    setExpanded((prev) => ({
+      ...prev,
+      [`S:${focusFile}`]: true,
+      [`U:${focusFile}`]: true,
+    }));
+  }, [focusFile]);
 
   const toggle = (key: string) =>
     setExpanded((prev) => ({ ...prev, [key]: !(prev[key] ?? true) }));
@@ -86,73 +96,17 @@ export function DiffReview({
   };
 
   const modeBar = (
-    <div className="gw-stack">
-      <div className="gw-tabs">
-        <button
-          type="button"
-          className={`gw-tab ${mode === 'working' ? 'active' : ''}`}
-          onClick={() => onModeChange('working')}
-        >
-          Working
-        </button>
-        <button
-          type="button"
-          className={`gw-tab ${mode === 'branch' ? 'active' : ''}`}
-          onClick={() => onModeChange('branch')}
-        >
-          Branch
-        </button>
-        <button
-          type="button"
-          className={`gw-tab ${mode === 'commit' ? 'active' : ''}`}
-          onClick={() => onModeChange('commit')}
-        >
-          Commits
-        </button>
-      </div>
-      {mode === 'commit' && (
-        <div className="gw-stack" style={{ gap: 5 }}>
-          <Picker
-            value={selectedCommit}
-            searchable
-            placeholder="Select commit..."
-            options={commits.map((c) => ({
-              value: c.hash,
-              label: `${c.short_hash} · ${c.subject}`,
-              sub: `${c.author} · ${c.date_rel}`,
-            }))}
-            onChange={onCommitSelect}
-          />
-          {selectedCommit && (
-            <div className="gw-row">
-              <button
-                type="button"
-                className="gw-btn gw-btn-xs"
-                onClick={() => {
-                  void navigator.clipboard.writeText(selectedCommit);
-                  onNotify(`Copied ${selectedCommit.slice(0, 8)}`);
-                }}
-              >
-                Copy Hash
-              </button>
-              <button
-                type="button"
-                className="gw-btn gw-btn-xs"
-                disabled={busy}
-                onClick={() =>
-                  void runAction(
-                    () => api.cherryPick(repo, selectedCommit),
-                    `Cherry-picked ${selectedCommit.slice(0, 8)}`,
-                  )
-                }
-              >
-                Cherry-Pick
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    <DiffModeBar
+      repo={repo}
+      mode={mode}
+      commits={commits}
+      selectedCommit={selectedCommit}
+      busy={busy}
+      onModeChange={onModeChange}
+      onCommitSelect={onCommitSelect}
+      onNotify={onNotify}
+      onCherryPick={(fn, okMsg) => void runAction(fn, okMsg)}
+    />
   );
 
   if (files.length === 0) {
@@ -174,40 +128,21 @@ export function DiffReview({
     <div className="gw-stack">
       {modeBar}
       {askTarget && (
-        <div className="gw-card gw-stack" style={{ borderColor: 'rgba(59, 130, 246, 0.45)' }}>
-          <div className="gw-between">
-            <strong style={{ fontSize: 11.5 }}>Ask AI about {askTarget.file}</strong>
-            <button className="gw-btn gw-btn-xs" onClick={() => setAskTarget(null)}>
-              ✕
-            </button>
-          </div>
-          <pre
-            className="gw-diff-box"
-            style={{ margin: 0, padding: 6, maxHeight: 90, overflow: 'auto' }}
-          >
-            {askTarget.snippet}
-          </pre>
-          <textarea
-            className="gw-textarea"
-            rows={2}
-            placeholder="Comment or question about this snippet..."
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-          />
-          <button
-            className="gw-btn gw-btn-primary"
-            disabled={sending || !question.trim()}
-            onClick={() => void sendAsk()}
-          >
-            {sending ? 'Sending...' : 'Send to AI Chat'}
-          </button>
-        </div>
+        <DiffAskAiBox
+          file={askTarget.file}
+          snippet={askTarget.snippet}
+          question={question}
+          sending={sending}
+          onQuestionChange={setQuestion}
+          onSend={() => void sendAsk()}
+          onClose={() => setAskTarget(null)}
+        />
       )}
 
       {files.map((df) => {
         const key = `${df.staged ? 'S' : 'U'}:${df.path}`;
         const isFocused = focusFile === df.path;
-        const isOpen = isFocused ? true : (expanded[key] ?? true);
+        const isOpen = expanded[key] ?? true;
 
         return (
           <div

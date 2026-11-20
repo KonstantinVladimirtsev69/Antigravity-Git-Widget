@@ -3,6 +3,7 @@ use git_widget_core::{
         abort_rebase, integrate_branches, preview_integration, pull_both_branches,
         scan_integration_sync, IntegrationMode,
     },
+    ops::{discard_all, pull_remote, unstage_all},
     safety::DirtyStrategy,
     scanner::ScannerConfig,
     status::get_status,
@@ -277,4 +278,48 @@ fn scanner_config_integration_mode_defaults_and_persists() {
     let json = serde_json::to_string(&cfg_rb).unwrap();
     let decoded: ScannerConfig = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded.integration_mode, IntegrationMode::Rebase);
+}
+
+#[tokio::test]
+async fn pull_remote_respects_different_upstream_name_and_unborn_head_ops_succeed() {
+    let tmp = TempDir::new().unwrap();
+
+    // 1. Unborn repo unstage_all / discard_all should not error
+    let unborn = tmp.path().join("unborn");
+    fs::create_dir_all(&unborn).unwrap();
+    git_sync(&unborn, &["init", "-b", "main"]);
+    fs::write(unborn.join("draft.txt"), "draft\n").unwrap();
+    git_sync(&unborn, &["add", "draft.txt"]);
+    unstage_all(&unborn).await.unwrap();
+    assert!(get_status(&unborn).await.unwrap().staged_changes.is_empty());
+    discard_all(&unborn).await.unwrap();
+    assert!(!unborn.join("draft.txt").exists());
+
+    // 2. Local branch `local-work` tracking `origin/main` pulls cleanly even when remote="origin" is passed
+    let bare = tmp.path().join("bare.git");
+    fs::create_dir_all(&bare).unwrap();
+    git_sync(&bare, &["init", "--bare", "-b", "main"]);
+
+    let dev1 = tmp.path().join("dev1");
+    init_repo(&dev1);
+    git_sync(&dev1, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git_sync(&dev1, &["push", "-u", "origin", "main"]);
+
+    let dev2 = tmp.path().join("dev2");
+    Command::new("git")
+        .args(["clone", bare.to_str().unwrap(), dev2.to_str().unwrap()])
+        .output()
+        .unwrap();
+    git_sync(&dev2, &["config", "user.email", "test@example.com"]);
+    git_sync(&dev2, &["config", "user.name", "Test User"]);
+    git_sync(&dev2, &["checkout", "-b", "local-work", "--track", "origin/main"]);
+
+    fs::write(dev1.join("upstream_file.txt"), "from main\n").unwrap();
+    git_sync(&dev1, &["add", "."]);
+    git_sync(&dev1, &["commit", "-m", "main commit"]);
+    git_sync(&dev1, &["push"]);
+
+    let pulled = pull_remote(&dev2, Some("origin")).await.unwrap();
+    assert!(pulled.success);
+    assert!(dev2.join("upstream_file.txt").exists());
 }
