@@ -7,11 +7,14 @@
 [![Rust](https://img.shields.io/badge/Rust-1.85%2B-f74c00?logo=rust)](https://www.rust-lang.org/)
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](https://react.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](./LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20(Antigravity%202.0)-3b82f6)](#установка)
+[![Platform](https://img.shields.io/badge/Platform-Только%20Windows%2010%2F11-3b82f6)](#установка)
 
 [**English**](./README.md) · [**Русский**](./README.ru.md)
 
 </div>
+
+> [!NOTE]
+> **Только для Windows 10/11:** Готовый бинарник (`git-widget-sidecar.exe`) и установщик рассчитаны на **Windows** (`Antigravity 2.0`). Версии для macOS и Linux на данный момент не собираются и не тестировались.
 
 ---
 

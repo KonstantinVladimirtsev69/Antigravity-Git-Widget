@@ -22,32 +22,63 @@ pub struct CreateGithubRepoReq {
     pub token: Option<String>,
 }
 
-/// Attempts to retrieve a GitHub HTTPS token from Git Credential Manager.
-async fn token_from_gcm() -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.args(["credential", "fill"])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-
-    #[cfg(windows)]
-    cmd.creation_flags(0x0800_0000);
-
-    let mut child = cmd.spawn().ok()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(b"protocol=https\nhost=github.com\n\n").await;
-    }
-    let out = child.wait_with_output().await.ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
-    for line in text.lines() {
+fn parse_credential_password(raw: &str) -> Option<String> {
+    for line in raw.lines() {
         if let Some(pw) = line.strip_prefix("password=") {
             let trimmed = pw.trim();
             if !trimmed.is_empty() {
                 return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn gcm_credential_arg_sets() -> Vec<Vec<&'static str>> {
+    vec![
+        vec!["credential", "fill"],
+        vec![
+            "-c",
+            "credential.helper=manager",
+            "-c",
+            "credential.interactive=never",
+            "credential",
+            "fill",
+        ],
+    ]
+}
+
+/// Attempts to retrieve a GitHub HTTPS token from env vars or Git Credential Manager.
+async fn token_from_gcm() -> Option<String> {
+    for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
+        if let Ok(val) = std::env::var(var) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    for args in gcm_credential_arg_sets() {
+        let mut cmd = Command::new("git");
+        cmd.args(&args)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GCM_INTERACTIVE", "never")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000);
+
+        let Ok(mut child) = cmd.spawn() else { continue };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(b"protocol=https\nhost=github.com\n\n").await;
+        }
+        let Ok(out) = child.wait_with_output().await else { continue };
+        if out.status.success() {
+            if let Some(tok) = parse_credential_password(&String::from_utf8_lossy(&out.stdout)) {
+                return Some(tok);
             }
         }
     }
@@ -211,4 +242,23 @@ async fn create_via_gh_cli(
     } else {
         format!("{url}.git")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{gcm_credential_arg_sets, parse_credential_password};
+
+    #[test]
+    fn extracts_password_from_git_credential_fill_output() {
+        let raw = "protocol=https\nhost=github.com\nusername=test\npassword=gho_secret_123\n";
+        assert_eq!(parse_credential_password(raw).as_deref(), Some("gho_secret_123"));
+        assert_eq!(parse_credential_password("protocol=https\npassword=\n"), None);
+    }
+
+    #[test]
+    fn gcm_attempts_include_manager_fallback_for_empty_helper_override() {
+        let attempts = gcm_credential_arg_sets();
+        assert_eq!(attempts[0], vec!["credential", "fill"]);
+        assert!(attempts.iter().any(|a| a.contains(&"credential.helper=manager")));
+    }
 }

@@ -4,3 +4,5 @@ dist/
 node_modules/
 .env
 *.pdb
+.planning/
+GITHUB_SETUP_LOCAL.md
