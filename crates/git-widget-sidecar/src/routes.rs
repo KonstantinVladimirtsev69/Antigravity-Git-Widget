@@ -101,6 +101,9 @@ pub fn merge_config_preserving_token(existing: &ScannerConfig, mut incoming: Sca
     if incoming.github_token.as_ref().is_none_or(|t| t.trim().is_empty()) {
         incoming.github_token = existing.github_token.clone();
     }
+    if incoming.github_oauth_client_id.as_ref().is_none_or(|t| t.trim().is_empty()) {
+        incoming.github_oauth_client_id = existing.github_oauth_client_id.clone();
+    }
     incoming
 }
 
@@ -197,6 +200,7 @@ mod tests {
             roots: vec![r"C:\Projects".into()],
             max_depth: 3,
             github_token: Some("ghp_super_secret".into()),
+            github_oauth_client_id: None,
             integration_mode: IntegrationMode::Rebase,
         };
         let pub_cfg = PublicScannerConfig::from(&secret);
@@ -208,6 +212,7 @@ mod tests {
             roots: vec![r"D:\Code".into()],
             max_depth: 2,
             github_token: None,
+            github_oauth_client_id: None,
             integration_mode: IntegrationMode::Squash,
         };
         let merged = merge_config_preserving_token(&secret, incoming);

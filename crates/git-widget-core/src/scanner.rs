@@ -33,6 +33,8 @@ pub struct ScannerConfig {
     #[serde(default)]
     pub github_token: Option<String>,
     #[serde(default)]
+    pub github_oauth_client_id: Option<String>,
+    #[serde(default)]
     pub integration_mode: IntegrationMode,
 }
 
@@ -42,6 +44,7 @@ impl Default for ScannerConfig {
             roots: vec![r"C:\Projects\".to_string()],
             max_depth: 3,
             github_token: None,
+            github_oauth_client_id: None,
             integration_mode: IntegrationMode::default(),
         }
     }

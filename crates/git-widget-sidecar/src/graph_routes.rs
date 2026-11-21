@@ -1,9 +1,6 @@
 //! Commit graph, commit file details, PR listing, and AI commit message routes.
 
-use crate::{
-    config::save_config,
-    routes::{check_auth, map_err, send_agentapi_message, AppState, RepoQuery},
-};
+use crate::routes::{check_auth, map_err, send_agentapi_message, AppState, RepoQuery};
 use axum::{
     extract::{Query, State},
     http::HeaderMap,
@@ -11,8 +8,8 @@ use axum::{
 };
 use git_widget_core::{
     diff::get_diff_files,
-    github::{create_github_repo, CreateGithubRepoReq},
-    graph::{get_commit_details, get_commit_graph, list_github_prs},
+    github_prs::list_github_prs_with_token,
+    graph::{get_commit_details, get_commit_graph},
 };
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
@@ -84,55 +81,9 @@ pub async fn prs_handler(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
-    let prs = list_github_prs(Path::new(&q.repo)).await;
+    let token = st.config.read().await.github_token.clone();
+    let prs = list_github_prs_with_token(Path::new(&q.repo), token.as_deref()).await;
     Json(prs).into_response()
-}
-
-#[derive(Deserialize)]
-pub struct CreateGithubBody {
-    pub repo: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub private: bool,
-    #[serde(default)]
-    pub use_ssh: bool,
-    pub token: Option<String>,
-}
-
-pub async fn create_github_repo_handler(
-    State(st): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(b): Json<CreateGithubBody>,
-) -> Response {
-    if let Err(r) = check_auth(&st, &headers) {
-        return r;
-    }
-    let provided_tok = b
-        .token
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let saved_tok = st.config.read().await.github_token.clone();
-    let req = CreateGithubRepoReq {
-        name: b.name,
-        description: b.description,
-        private: b.private,
-        use_ssh: b.use_ssh,
-        token: provided_tok.clone().or(saved_tok),
-    };
-    match create_github_repo(Path::new(&b.repo), &req).await {
-        Ok(res) => {
-            if let Some(tok) = provided_tok {
-                let mut cfg = st.config.write().await;
-                cfg.github_token = Some(tok);
-                let _ = save_config(&cfg);
-            }
-            Json(res).into_response()
-        }
-        Err(e) => map_err(e),
-    }
 }
 
 pub async fn suggest_commit_handler(

@@ -4,6 +4,7 @@ mod branch_routes;
 mod config;
 mod diff_routes;
 mod git_routes;
+mod github_routes;
 mod graph_routes;
 mod installer;
 mod integrate_routes;
@@ -25,10 +26,10 @@ use diff_routes::{
     accept_hunk_handler, ask_ai_handler, commits_list_handler, diff_list_handler,
     discard_file_handler, reject_hunk_handler, stage_file_handler, unstage_file_handler,
 };
-use graph_routes::{
-    commit_details_handler, create_github_repo_handler, graph_handler, prs_handler,
-    suggest_commit_handler,
+use github_routes::{
+    create_github_repo_handler, oauth_logout_handler, oauth_poll_handler, oauth_start_handler,
 };
+use graph_routes::{commit_details_handler, graph_handler, prs_handler, suggest_commit_handler};
 use integrate_routes::{
     abort_rebase_handler, continue_rebase_handler, integrate_handler, preview_integrate_handler,
     pull_both_handler, save_integration_mode_handler, scan_sync_handler,
@@ -142,6 +143,9 @@ async fn main() {
         .route("/api/commit-details", get(commit_details_handler))
         .route("/api/prs", get(prs_handler))
         .route("/api/github/create-repo", post(create_github_repo_handler))
+        .route("/api/github/oauth/start", post(oauth_start_handler))
+        .route("/api/github/oauth/poll", post(oauth_poll_handler))
+        .route("/api/github/oauth/logout", post(oauth_logout_handler))
         .route("/api/ai/suggest-commit", post(suggest_commit_handler))
         .route("/api/diff", get(diff_list_handler))
         .route("/api/diff/accept-hunk", post(accept_hunk_handler))

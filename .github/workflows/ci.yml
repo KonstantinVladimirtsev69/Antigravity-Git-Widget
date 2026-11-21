@@ -33,6 +33,8 @@ jobs:
         run: cargo test --workspace
 
       - name: Build release sidecar binary
+        env:
+          GITHUB_OAUTH_CLIENT_ID: ${{ vars.GITHUB_OAUTH_CLIENT_ID || 'Ov23lig6JmbXKRt6zC2D' }}
         run: cargo build --release --workspace
 
       - name: Upload release binary artifact

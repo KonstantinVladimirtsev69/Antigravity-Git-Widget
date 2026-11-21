@@ -145,6 +145,10 @@ export default function App() {
           hasSavedToken={Boolean(data.config.has_github_token)}
           busy={busy}
           onClose={() => setShowRemoteForm(false)}
+          onAuthChanged={async () => {
+            data.setConfig((await api.getRepos()).config);
+          }}
+          onError={setError}
           onAddExisting={async (name, url) => {
             if (await flow.runSimple(() => api.addRemote(selectedRepo, name, url))) setShowRemoteForm(false);
           }}

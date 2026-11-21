@@ -6,6 +6,7 @@ pub mod diff_parser;
 pub mod error;
 pub mod git_cli;
 pub mod github;
+pub mod github_oauth;
 pub mod github_prs;
 pub mod graph;
 pub mod integrate;
