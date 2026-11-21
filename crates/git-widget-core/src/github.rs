@@ -22,16 +22,19 @@ pub struct CreateGithubRepoReq {
     pub token: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TokenSource {
+    ExplicitOrSaved,
+    Env,
+    Gcm,
+}
+
 fn parse_credential_password(raw: &str) -> Option<String> {
-    for line in raw.lines() {
-        if let Some(pw) = line.strip_prefix("password=") {
-            let trimmed = pw.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
+    raw.lines()
+        .filter_map(|line| line.strip_prefix("password="))
+        .map(str::trim)
+        .find(|pw| !pw.is_empty())
+        .map(ToString::to_string)
 }
 
 fn gcm_credential_arg_sets() -> Vec<Vec<&'static str>> {
@@ -48,13 +51,30 @@ fn gcm_credential_arg_sets() -> Vec<Vec<&'static str>> {
     ]
 }
 
+fn format_auth_error(source: TokenSource, api_msg: &str) -> String {
+    match source {
+        TokenSource::Gcm => format!(
+            "GitHub token in Windows Credential Manager is expired or invalid ({api_msg}). \
+             Paste a GitHub Personal Access Token (repo scope) in the token field above (saved once), \
+             or install GitHub CLI (`gh auth login`)."
+        ),
+        TokenSource::Env => format!(
+            "GitHub token from GH_TOKEN/GITHUB_TOKEN is invalid or expired ({api_msg})."
+        ),
+        TokenSource::ExplicitOrSaved => format!(
+            "Provided or saved GitHub Personal Access Token is invalid or expired ({api_msg}). \
+             Enter a valid PAT with `repo` scope."
+        ),
+    }
+}
+
 /// Attempts to retrieve a GitHub HTTPS token from env vars or Git Credential Manager.
-async fn token_from_gcm() -> Option<String> {
+async fn resolve_fallback_token() -> Option<(String, TokenSource)> {
     for var in ["GH_TOKEN", "GITHUB_TOKEN"] {
         if let Ok(val) = std::env::var(var) {
             let trimmed = val.trim();
             if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
+                return Some((trimmed.to_string(), TokenSource::Env));
             }
         }
     }
@@ -78,7 +98,7 @@ async fn token_from_gcm() -> Option<String> {
         let Ok(out) = child.wait_with_output().await else { continue };
         if out.status.success() {
             if let Some(tok) = parse_credential_password(&String::from_utf8_lossy(&out.stdout)) {
-                return Some(tok);
+                return Some((tok, TokenSource::Gcm));
             }
         }
     }
@@ -95,42 +115,38 @@ pub async fn create_github_repo(repo_path: &Path, req: &CreateGithubRepoReq) -> 
         ));
     }
 
-    let token = req
-        .token
-        .as_ref()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty());
-    let resolved_token = match token {
-        Some(t) => Some(t),
-        None => token_from_gcm().await,
+    let explicit = req.token.as_ref().map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+    let resolved = match explicit {
+        Some(t) => Some((t, TokenSource::ExplicitOrSaved)),
+        None => resolve_fallback_token().await,
     };
 
-    let remote_url = if let Some(tok) = resolved_token {
-        create_via_curl_api(name, &req.description, req.private, req.use_ssh, &tok).await?
-    } else {
-        create_via_gh_cli(repo_path, name, &req.description, req.private).await?
+    let remote_url = match resolved {
+        Some((tok, source)) => {
+            match create_via_curl_api(name, &req.description, req.private, req.use_ssh, &tok, source).await {
+                Ok(url) => url,
+                Err(api_err) if source != TokenSource::ExplicitOrSaved => {
+                    match create_via_gh_cli(repo_path, name, &req.description, req.private).await {
+                        Ok(url) => url,
+                        Err(_) => return Err(api_err),
+                    }
+                }
+                Err(api_err) => return Err(api_err),
+            }
+        }
+        None => create_via_gh_cli(repo_path, name, &req.description, req.private).await?,
     };
 
-    // Configure `origin` remote (add or set-url if it already exists)
     let has_origin = run_git_raw(repo_path, &["remote", "get-url", "origin"], LOCAL_TIMEOUT_SECS)
         .await
         .map(|o| o.success)
         .unwrap_or(false);
-    if has_origin {
-        run_git(
-            repo_path,
-            &["remote", "set-url", "origin", &remote_url],
-            LOCAL_TIMEOUT_SECS,
-        )
-        .await?;
+    let remote_args = if has_origin {
+        ["remote", "set-url", "origin", &remote_url]
     } else {
-        run_git(
-            repo_path,
-            &["remote", "add", "origin", &remote_url],
-            LOCAL_TIMEOUT_SECS,
-        )
-        .await?;
-    }
+        ["remote", "add", "origin", &remote_url]
+    };
+    run_git(repo_path, &remote_args, LOCAL_TIMEOUT_SECS).await?;
 
     let pub_res = publish_branch(repo_path, Some("origin")).await?;
     Ok(OpResult {
@@ -146,6 +162,7 @@ async fn create_via_curl_api(
     private: bool,
     use_ssh: bool,
     token: &str,
+    source: TokenSource,
 ) -> Result<String> {
     let body = serde_json::json!({
         "name": name,
@@ -196,14 +213,11 @@ async fn create_via_curl_api(
     if let Some(url) = val.get(url_key).and_then(|v| v.as_str()) {
         return Ok(url.to_string());
     }
-    let msg = val
-        .get("message")
-        .and_then(|v| v.as_str())
-        .unwrap_or("GitHub API error");
-    let details = val
-        .get("errors")
-        .map(|e| e.to_string())
-        .unwrap_or_default();
+    let msg = val.get("message").and_then(|v| v.as_str()).unwrap_or("GitHub API error");
+    if msg.eq_ignore_ascii_case("Bad credentials") || msg.contains("Requires authentication") {
+        return Err(CoreError::InvalidInput(format_auth_error(source, msg)));
+    }
+    let details = val.get("errors").map(|e| e.to_string()).unwrap_or_default();
     Err(CoreError::InvalidInput(format!("GitHub API: {msg} {details}")))
 }
 
@@ -226,8 +240,7 @@ async fn create_via_gh_cli(
 
     let Ok(out) = cmd.output().await else {
         return Err(CoreError::InvalidInput(
-            "Provide a GitHub Personal Access Token (or install `gh` CLI) to create a repository."
-                .into(),
+            "Provide a GitHub Personal Access Token (or install `gh` CLI) to create a repository.".into(),
         ));
     };
     if !out.status.success() {
@@ -237,16 +250,14 @@ async fn create_via_gh_cli(
         )));
     }
     let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    Ok(if url.ends_with(".git") {
-        url
-    } else {
-        format!("{url}.git")
-    })
+    Ok(if url.ends_with(".git") { url } else { format!("{url}.git") })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{gcm_credential_arg_sets, parse_credential_password};
+    use super::{
+        format_auth_error, gcm_credential_arg_sets, parse_credential_password, TokenSource,
+    };
 
     #[test]
     fn extracts_password_from_git_credential_fill_output() {
@@ -260,5 +271,15 @@ mod tests {
         let attempts = gcm_credential_arg_sets();
         assert_eq!(attempts[0], vec!["credential", "fill"]);
         assert!(attempts.iter().any(|a| a.contains(&"credential.helper=manager")));
+    }
+
+    #[test]
+    fn bad_credentials_error_explains_expired_gcm_vs_pat() {
+        let gcm_msg = format_auth_error(TokenSource::Gcm, "Bad credentials");
+        assert!(gcm_msg.contains("Windows Credential Manager"));
+        assert!(gcm_msg.contains("Personal Access Token"));
+
+        let pat_msg = format_auth_error(TokenSource::ExplicitOrSaved, "Bad credentials");
+        assert!(pat_msg.contains("invalid or expired"));
     }
 }

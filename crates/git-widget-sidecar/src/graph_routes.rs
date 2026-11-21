@@ -114,21 +114,23 @@ pub async fn create_github_repo_handler(
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    if let Some(ref tok) = provided_tok {
-        let mut cfg = st.config.write().await;
-        cfg.github_token = Some(tok.clone());
-        let _ = save_config(&cfg);
-    }
     let saved_tok = st.config.read().await.github_token.clone();
     let req = CreateGithubRepoReq {
         name: b.name,
         description: b.description,
         private: b.private,
         use_ssh: b.use_ssh,
-        token: provided_tok.or(saved_tok),
+        token: provided_tok.clone().or(saved_tok),
     };
     match create_github_repo(Path::new(&b.repo), &req).await {
-        Ok(res) => Json(res).into_response(),
+        Ok(res) => {
+            if let Some(tok) = provided_tok {
+                let mut cfg = st.config.write().await;
+                cfg.github_token = Some(tok);
+                let _ = save_config(&cfg);
+            }
+            Json(res).into_response()
+        }
         Err(e) => map_err(e),
     }
 }
