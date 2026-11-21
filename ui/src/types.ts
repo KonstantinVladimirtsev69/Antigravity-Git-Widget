@@ -189,3 +189,17 @@ export type DirtyStrategy =
   | { mode: 'fail_if_dirty' }
   | { mode: 'stash_and_pop' }
   | { mode: 'quick_commit'; message: string };
+
+export interface GithubDeviceFlowStart {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+  interval: number;
+}
+
+export interface GithubDevicePollRes {
+  status: 'pending' | 'authorized' | 'expired' | 'denied' | 'error';
+  interval?: number | null;
+  message?: string | null;
+}

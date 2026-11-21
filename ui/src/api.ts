@@ -6,6 +6,8 @@ import type {
   DiffFile,
   DirtyStrategy,
   DualBranchSync,
+  GithubDeviceFlowStart,
+  GithubDevicePollRes,
   GraphResponse,
   GuardedOpKind,
   GuardedOpOutcome,
@@ -87,6 +89,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ repo, ...payload }),
     }),
+  startGithubOAuth: () =>
+    request<GithubDeviceFlowStart>('./api/github/oauth/start', { method: 'POST', body: '{}' }),
+  pollGithubOAuth: (deviceCode: string) =>
+    request<GithubDevicePollRes>('./api/github/oauth/poll', {
+      method: 'POST',
+      body: JSON.stringify({ device_code: deviceCode }),
+    }),
+  logoutGithubOAuth: () =>
+    request<{ ok: boolean }>('./api/github/oauth/logout', { method: 'POST', body: '{}' }),
   initRepo: (repo: string) =>
     request<OpResult>('./api/git/init-repo', { method: 'POST', body: JSON.stringify({ repo }) }),
   commitAll: (repo: string, message: string, amend = false) =>

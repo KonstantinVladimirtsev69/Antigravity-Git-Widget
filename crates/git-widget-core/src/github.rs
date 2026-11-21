@@ -3,6 +3,7 @@
 use crate::{
     error::{CoreError, Result},
     git_cli::{run_git, run_git_raw, LOCAL_TIMEOUT_SECS},
+    github_oauth::curl_binary,
     ops::{publish_branch, OpResult},
 };
 use serde::{Deserialize, Serialize};
@@ -174,7 +175,7 @@ async fn create_via_curl_api(
 
     let sanitized = token.replace(['\r', '\n', '"'], "");
     let cfg_stdin = format!("header = \"Authorization: Bearer {sanitized}\"\n");
-    let mut cmd = Command::new("curl.exe");
+    let mut cmd = Command::new(curl_binary());
     cmd.args([
         "-sS",
         "-K",
