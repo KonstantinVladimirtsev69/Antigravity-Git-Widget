@@ -8,7 +8,8 @@ use axum::{
 };
 use git_widget_core::{
     diff::get_diff_files,
-    graph::{get_commit_details, get_commit_graph, list_github_prs},
+    github_prs::list_github_prs_with_token,
+    graph::{get_commit_details, get_commit_graph},
 };
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
@@ -80,7 +81,8 @@ pub async fn prs_handler(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
-    let prs = list_github_prs(Path::new(&q.repo)).await;
+    let token = st.config.read().await.github_token.clone();
+    let prs = list_github_prs_with_token(Path::new(&q.repo), token.as_deref()).await;
     Json(prs).into_response()
 }
 

@@ -61,7 +61,7 @@ export function PrPanel({ prData, currentBranch, baseBranch }: PrPanelProps) {
         <div className="gw-stack" style={{ gap: 4 }}>
           {!prData.gh_available ? (
             <div className="gw-muted">
-              Install GitHub CLI (`gh`) to list live PRs inline, or use the GitHub buttons above.
+              Sign in with GitHub (via `+` button) or install `gh` CLI to list private PRs inline.
             </div>
           ) : prData.prs.length === 0 ? (
             <div className="gw-muted">No open pull requests.</div>

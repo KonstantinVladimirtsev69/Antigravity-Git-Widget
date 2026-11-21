@@ -110,13 +110,17 @@ export function useRepoData(
         const needCommits = tab === 'diff' || mode === 'commit';
         const needDiff = tab === 'diff' || mode !== 'working' || st.changes.length > 0;
 
-        const [gr, cm] = await Promise.all([
+        const [gr, cm, pr] = await Promise.all([
           api.getGraph(repoPath, allBranches, author || undefined),
           needCommits ? api.getCommits(repoPath) : Promise.resolve<CommitInfo[] | null>(null),
+          st.remotes.length > 0
+            ? api.getPrs(repoPath).catch(() => null)
+            : Promise.resolve<PrListResponse | null>(null),
         ]);
         if (activeRepoRef.current !== repoPath) return;
 
         setGraphData(gr);
+        setPrData(pr);
         if (cm) {
           setCommits(cm);
           if (!commitHash && cm[0]?.hash) setSelectedCommit(cm[0].hash);
@@ -152,14 +156,6 @@ export function useRepoData(
     setGraphAuthor('');
     lastSigRef.current = '';
     void refreshRepoData(selectedRepo, { commitHash: '', author: '' });
-    void api
-      .getPrs(selectedRepo)
-      .then((res) => {
-        if (activeRepoRef.current === selectedRepo) setPrData(res);
-      })
-      .catch(() => {
-        if (activeRepoRef.current === selectedRepo) setPrData(null);
-      });
   }, [selectedRepo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

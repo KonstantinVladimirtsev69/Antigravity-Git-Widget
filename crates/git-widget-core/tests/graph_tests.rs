@@ -1,4 +1,7 @@
-use git_widget_core::graph::{get_commit_details, get_commit_graph, remote_to_github_url};
+use git_widget_core::{
+    github_prs::{extract_github_owner_repo, parse_github_rest_prs_json},
+    graph::{get_commit_details, get_commit_graph, remote_to_github_url},
+};
 use std::{fs, path::Path, process::Command};
 use tempfile::TempDir;
 
@@ -82,4 +85,29 @@ async fn graph_returns_parents_authors_decorations_and_details() {
 
     // Flag injection must be rejected
     assert!(get_commit_details(&repo, "--stat").await.is_err());
+}
+
+#[test]
+fn parses_github_owner_repo_and_rest_prs_json() {
+    assert_eq!(
+        extract_github_owner_repo("https://github.com/KonstantinVladimirtsev69/Antigravity-Git-Widget"),
+        Some(("KonstantinVladimirtsev69".to_string(), "Antigravity-Git-Widget".to_string()))
+    );
+    assert_eq!(extract_github_owner_repo("https://gitlab.com/a/b"), None);
+
+    let sample = r#"[{
+        "number": 42,
+        "title": "feat: add OAuth Device Flow",
+        "html_url": "https://github.com/acme/repo/pull/42",
+        "updated_at": "2026-11-21T20:00:00Z",
+        "user": { "login": "alice" },
+        "head": { "ref": "feat/oauth" },
+        "base": { "ref": "main" }
+    }]"#;
+    let prs = parse_github_rest_prs_json(sample).unwrap();
+    assert_eq!(prs.len(), 1);
+    assert_eq!(prs[0].number, 42);
+    assert_eq!(prs[0].author, "alice");
+    assert_eq!(prs[0].head_ref, "feat/oauth");
+    assert_eq!(prs[0].base_ref, "main");
 }
