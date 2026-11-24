@@ -229,3 +229,33 @@ fn wait_for_parent_pid_waits_for_real_child_and_handles_exited_pid() {
     cleanup_stale_update_dirs();
     assert!(!stale.exists());
 }
+
+#[cfg(windows)]
+#[test]
+fn replace_exe_succeeds_when_old_backup_is_locked() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let root = tmp_dir("gw_locked_old");
+    let target_exe = root.join("git-widget-sidecar.exe");
+    let old_exe = target_exe.with_extension("exe.old");
+    let new_exe = root.join("new-sidecar.exe");
+    fs::write(&target_exe, b"MZ-V1").unwrap();
+    fs::write(&old_exe, b"MZ-V0-LOCKED").unwrap();
+    fs::write(&new_exe, b"MZ-V2").unwrap();
+
+    // Hold old_exe open with share_mode(0) to simulate an older sidecar process
+    // still running from git-widget-sidecar.exe.old across a second consecutive update.
+    let _lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(0)
+        .open(&old_exe)
+        .unwrap();
+
+    let staged = replace_exe_rename_before_copy(&new_exe, &target_exe).unwrap();
+    assert_eq!(fs::read(&target_exe).unwrap(), b"MZ-V2");
+    assert_ne!(staged, old_exe);
+
+    drop(_lock);
+    let _ = fs::remove_dir_all(&root);
+}

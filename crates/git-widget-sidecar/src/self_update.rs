@@ -120,12 +120,21 @@ pub fn replace_exe_rename_before_copy(source_exe: &Path, target_exe: &Path) -> R
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed creating {}: {e}", parent.display()))?;
     }
-    let old_path = target_exe.with_extension("exe.old");
+    let mut old_path = target_exe.with_extension("exe.old");
     if same_path(source_exe, target_exe) {
         return Ok(old_path);
     }
 
-    let _ = fs::remove_file(&old_path);
+    if old_path.exists() && fs::remove_file(&old_path).is_err() {
+        let pid = std::process::id();
+        for seq in 0..1000u32 {
+            let candidate = target_exe.with_extension(format!("exe.old.{pid}.{seq}"));
+            if !candidate.exists() || fs::remove_file(&candidate).is_ok() {
+                old_path = candidate;
+                break;
+            }
+        }
+    }
     if target_exe.exists() {
         let mut renamed = false;
         let mut last_err = None;
@@ -231,20 +240,40 @@ pub fn run_self_update(
     Ok(())
 }
 
-/// Best-effort cleanup of stale `gw-update-*` temp directories on sidecar startup.
+/// Best-effort cleanup of stale `gw-update-*` temp directories and `.exe.old*` backups.
 pub fn cleanup_stale_update_dirs() {
-    let Ok(entries) = fs::read_dir(std::env::temp_dir()) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir()
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| name.starts_with("gw-update-"))
-        {
-            let _ = fs::remove_dir_all(&path);
+    if let Ok(entries) = fs::read_dir(std::env::temp_dir()) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| name.starts_with("gw-update-"))
+            {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
+    }
+    let hosts = detect_installed_hosts();
+    for dir in [
+        hosts.antigravity_plugin_dir.map(|d| d.join("sidecars").join("git_widget")),
+        hosts.t3_local_dir,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file()
+                    && p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("git-widget-sidecar.exe.old"))
+                {
+                    let _ = fs::remove_file(&p);
+                }
+            }
         }
     }
 }

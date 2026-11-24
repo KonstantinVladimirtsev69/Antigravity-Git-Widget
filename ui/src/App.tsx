@@ -151,10 +151,14 @@ export default function App() {
           onSave={async (cfg) => {
             setBusy(true);
             try {
+              const prevRepo = data.config.update_repo ?? null;
               const res = await api.saveConfig(cfg);
               data.setRepos(res.repos);
               data.setConfig(res.config);
               setShowSettings(false);
+              if (prevRepo !== (res.config.update_repo ?? null)) {
+                void updater.checkForUpdates();
+              }
             } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
           }}
         />

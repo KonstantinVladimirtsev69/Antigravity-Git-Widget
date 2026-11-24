@@ -161,7 +161,10 @@ async fn run_curl(args: &[&str], url: &str, token: Option<&str>) -> Result<Vec<u
     let mut cmd = Command::new(curl_binary());
     cmd.args(args).args(["-H", "User-Agent: antigravity-git-widget"]);
     let cfg = token.map(str::trim).filter(|s| !s.is_empty()).map(|t| {
-        format!("header = \"Authorization: Bearer {}\"\n", t.replace(['\r', '\n', '"'], ""))
+        format!(
+            "header = \"Authorization: Bearer {}\"\n",
+            t.replace(['\r', '\n', '"', '\\'], "")
+        )
     });
     if cfg.is_some() { cmd.args(["-K", "-"]).stdin(Stdio::piped()); } else { cmd.stdin(Stdio::null()); }
     cmd.arg(url).stdout(Stdio::piped()).stderr(Stdio::piped());
