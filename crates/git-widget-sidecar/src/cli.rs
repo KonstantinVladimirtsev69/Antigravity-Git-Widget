@@ -27,6 +27,13 @@ pub enum CliMode {
     EnsureT3Patched {
         t3_dir: Option<PathBuf>,
     },
+    SelfUpdate {
+        parent_pid: u32,
+        serve_port: Option<u16>,
+        port_file: Option<PathBuf>,
+        ag_dir: Option<PathBuf>,
+        t3_local_dir: Option<PathBuf>,
+    },
 }
 
 fn next_value(args: &[String], idx: &mut usize, flag: &str) -> Result<String, String> {

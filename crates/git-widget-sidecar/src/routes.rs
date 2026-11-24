@@ -1,6 +1,9 @@
 //! Core HTTP state, auth, config, workspace resolution, and status route handlers.
 
-use crate::config::{load_config, save_config};
+use crate::{
+    config::{load_config, save_config},
+    update_routes::UpdateManager,
+};
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
@@ -26,6 +29,9 @@ pub struct AppState {
     pub project_id: Option<String>,
     pub conversation_id: Option<String>,
     pub config: Arc<RwLock<ScannerConfig>>,
+    pub serve_port: Option<u16>,
+    pub port_file: Option<PathBuf>,
+    pub update: Arc<UpdateManager>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +40,7 @@ pub struct PublicScannerConfig {
     pub max_depth: usize,
     pub integration_mode: IntegrationMode,
     pub has_github_token: bool,
+    pub update_repo: Option<String>,
 }
 
 impl From<&ScannerConfig> for PublicScannerConfig {
@@ -43,6 +50,7 @@ impl From<&ScannerConfig> for PublicScannerConfig {
             max_depth: cfg.max_depth,
             integration_mode: cfg.integration_mode,
             has_github_token: cfg.github_token.as_ref().is_some_and(|t| !t.trim().is_empty()),
+            update_repo: cfg.update_repo.clone(),
         }
     }
 }
@@ -202,6 +210,7 @@ mod tests {
             github_token: Some("ghp_super_secret".into()),
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Rebase,
+            update_repo: None,
         };
         let pub_cfg = PublicScannerConfig::from(&secret);
         let serialized = serde_json::to_string(&pub_cfg).unwrap();
@@ -214,6 +223,7 @@ mod tests {
             github_token: None,
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Squash,
+            update_repo: None,
         };
         let merged = merge_config_preserving_token(&secret, incoming);
         assert_eq!(merged.github_token.as_deref(), Some("ghp_super_secret"));

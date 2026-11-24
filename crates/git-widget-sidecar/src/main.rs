@@ -1,14 +1,12 @@
 //! Antigravity 2.0 & T3 Code Sidecar HTTP server with embedded React Web UI.
 
 mod branch_routes;
-mod config;
 mod diff_routes;
 mod git_routes;
 mod github_routes;
 mod graph_routes;
 mod installer;
 mod integrate_routes;
-mod routes;
 mod workspace;
 
 use axum::{
@@ -33,7 +31,7 @@ use git_routes::{
 };
 use git_widget_sidecar::{
     cli::{parse_cli_args, CliMode},
-    t3_installer,
+    config, routes, self_update, t3_installer, update_routes,
 };
 use github_routes::{
     create_github_repo_handler, oauth_logout_handler, oauth_poll_handler, oauth_start_handler,
@@ -99,6 +97,9 @@ async fn run_server(port: u16, port_file: Option<PathBuf>) {
         project_id: std::env::var("ANTIGRAVITY_PROJECT_ID").ok(),
         conversation_id: std::env::var("ANTIGRAVITY_CONVERSATION_ID").ok(),
         config: init_config(),
+        serve_port: None,
+        port_file: port_file.clone(),
+        update: Arc::new(update_routes::UpdateManager::new()),
     });
 
     let app = Router::new()
@@ -212,5 +213,6 @@ async fn main() {
                 eprintln!("[git-widget] {err}");
             }
         }
+        CliMode::SelfUpdate { .. } => {}
     }
 }

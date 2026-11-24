@@ -6,3 +6,7 @@ pub mod t3_scheduler;
 pub mod t3_scripts;
 pub mod t3_installer;
 pub mod cli;
+pub mod config;
+pub mod routes;
+pub mod self_update;
+pub mod update_routes;
