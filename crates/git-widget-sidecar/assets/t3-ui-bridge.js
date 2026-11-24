@@ -36,11 +36,14 @@
       font-size: 12px; font-weight: 600; cursor: pointer; -webkit-app-region: no-drag;
     }
     #gw-t3-drawer {
-      position: fixed; top: 40px; right: 0; width: min(440px, 92vw); height: calc(100vh - 40px);
-      z-index: 9999; display: none; flex-direction: column; background: var(--background, #131316);
+      position: fixed; top: 40px; right: 0; width: min(420px, 92vw); height: calc(100vh - 40px);
+      z-index: 40; display: none; flex-direction: column; background: var(--background, #131316);
       border-left: 1px solid var(--border, rgba(128,128,128,0.35));
       border-top: 1px solid var(--border, rgba(128,128,128,0.2));
-      box-shadow: -8px 0 28px rgba(0,0,0,0.45); -webkit-app-region: no-drag;
+      box-shadow: -6px 0 22px rgba(0,0,0,0.35); -webkit-app-region: no-drag;
+    }
+    html.gw-t3-pushed #root {
+      width: calc(100% - 420px) !important; transition: width 140ms ease-out;
     }
     #gw-t3-drawer.open { display: flex; }
     #gw-t3-drawer-hdr {
@@ -139,11 +142,15 @@
   }
 
   function positionDrawer() {
-    if (!drawerEl || !drawerOpen) return;
+    if (!drawerEl || !drawerOpen) {
+      document.documentElement.classList.remove('gw-t3-pushed');
+      return;
+    }
     const panel = document.querySelector('[data-right-panel-surface-content]');
     if (panel) {
       const r = panel.getBoundingClientRect();
       if (r.width >= 260 && r.height >= 240) {
+        document.documentElement.classList.remove('gw-t3-pushed');
         const top = Math.max(40, Math.round(r.top));
         Object.assign(drawerEl.style, {
           top: `${top}px`, left: `${Math.round(r.left)}px`, right: 'auto',
@@ -152,13 +159,22 @@
         return;
       }
     }
-    Object.assign(drawerEl.style, { top: '40px', left: 'auto', right: '0', width: 'min(440px, 92vw)', height: 'calc(100vh - 40px)' });
+    const canPush = window.innerWidth >= 960;
+    document.documentElement.classList.toggle('gw-t3-pushed', canPush);
+    Object.assign(drawerEl.style, {
+      top: '40px', left: 'auto', right: '0',
+      width: canPush ? '420px' : 'min(420px, 92vw)', height: 'calc(100vh - 40px)',
+    });
   }
 
   function ensureNativeButton() {
     const toggle = document.querySelector('[data-right-panel-toggle]');
     let btn = document.getElementById('gw-t3-native-btn');
     if (toggle && toggle.parentElement) {
+      if (!toggle.dataset.gwBound) {
+        toggle.dataset.gwBound = '1';
+        toggle.addEventListener('click', () => { if (drawerOpen) setDrawerOpen(false); }, true);
+      }
       if (!btn) {
         btn = document.createElement('button');
         btn.type = 'button';
@@ -222,27 +238,21 @@
     if (!data || data.type !== 'git-widget-ask-ai') return;
     const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
     if (!prompt) return;
-    if (insertIntoComposer(prompt)) {
-      showToast('Промпт вставлен в композер T3 Code');
-      return;
-    }
+    if (insertIntoComposer(prompt)) { showToast('Промпт вставлен в композер T3 Code'); return; }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard
-        .writeText(prompt)
+      navigator.clipboard.writeText(prompt)
         .then(() => showToast('Композер недоступен — промпт скопирован в буфер обмена'))
         .catch(() => showToast('Не удалось вставить или скопировать промпт'));
-    } else {
-      showToast('Композер недоступен');
-    }
+    } else showToast('Композер недоступен');
   });
 
   function setDrawerOpen(open) {
     drawerOpen = open;
     if (!drawerEl) return;
     drawerEl.classList.toggle('open', open);
+    positionDrawer();
     ensureNativeButton();
     if (open) {
-      positionDrawer();
       if (!iframeEl.src) iframeEl.src = `${BASE_URL}/?host=t3code`;
       postTheme();
       syncWorkspace(true);
@@ -256,31 +266,22 @@
     document.head.appendChild(style);
 
     fallbackBtn = document.createElement('button');
-    fallbackBtn.type = 'button';
-    fallbackBtn.id = 'gw-t3-fallback-btn';
-    fallbackBtn.innerHTML = `${GIT_ICON_SVG}<span>Git</span>`;
-    fallbackBtn.title = 'Git Widget (Alt+G)';
+    fallbackBtn.type = 'button'; fallbackBtn.id = 'gw-t3-fallback-btn';
+    fallbackBtn.innerHTML = `${GIT_ICON_SVG}<span>Git</span>`; fallbackBtn.title = 'Git Widget (Alt+G)';
     fallbackBtn.addEventListener('click', () => setDrawerOpen(!drawerOpen));
 
-    drawerEl = document.createElement('aside');
-    drawerEl.id = 'gw-t3-drawer';
-    const hdr = document.createElement('div');
-    hdr.id = 'gw-t3-drawer-hdr';
-    const title = document.createElement('span');
-    title.textContent = 'Git Widget';
+    drawerEl = document.createElement('aside'); drawerEl.id = 'gw-t3-drawer';
+    const hdr = document.createElement('div'); hdr.id = 'gw-t3-drawer-hdr';
+    const title = document.createElement('span'); title.textContent = 'Git Widget';
     const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.id = 'gw-t3-drawer-close';
-    closeBtn.textContent = '×';
-    closeBtn.title = 'Закрыть Git Widget (Esc)';
+    closeBtn.type = 'button'; closeBtn.id = 'gw-t3-drawer-close';
+    closeBtn.textContent = '×'; closeBtn.title = 'Закрыть Git Widget (Esc)';
     closeBtn.addEventListener('click', () => setDrawerOpen(false));
     hdr.append(title, closeBtn);
 
-    iframeEl = document.createElement('iframe');
-    iframeEl.title = 'Git Widget';
+    iframeEl = document.createElement('iframe'); iframeEl.title = 'Git Widget';
     iframeEl.addEventListener('load', () => { postTheme(); syncWorkspace(true); });
-    drawerEl.append(hdr, iframeEl);
-    document.body.append(fallbackBtn, drawerEl);
+    drawerEl.append(hdr, iframeEl); document.body.append(fallbackBtn, drawerEl);
 
     ensureNativeButton();
     window.addEventListener('resize', positionDrawer);
