@@ -1,5 +1,6 @@
 // Integration test for t3-server-hook.cjs (auth enforcement, UTF-8 proxying, HTML injection).
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import http from 'node:http';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -109,7 +110,20 @@ try {
   assert.equal(bridgeRes.status, 200);
   assert.ok(bridgeRes.body.includes('initGitWidgetT3Bridge'));
 
-  console.log('[PASS] All 6 T3 Code server hook integration assertions passed.');
+  // Regression: NODE_OPTIONS --require with forward-slash Windows path loads cleanly
+  const hookPosix = hookPath.replace(/\\/g, '/');
+  const out = execFileSync(process.execPath, ['-e', 'process.stdout.write("node-options-ok")'], {
+    env: {
+      ...process.env,
+      NODE_OPTIONS: `--require "${hookPosix.replace(/"/g, '\\"')}"`,
+      ELECTRON_RUN_AS_NODE: '0',
+      GIT_WIDGET_FORCE_HOOK: '0',
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(out, 'node-options-ok', 'NODE_OPTIONS --require must load hook without backslash escaping');
+
+  console.log('[PASS] All 7 T3 Code server hook integration assertions passed.');
 } finally {
   mockT3.closeAllConnections?.();
   mockSidecar.closeAllConnections?.();

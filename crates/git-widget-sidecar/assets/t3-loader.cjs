@@ -64,9 +64,10 @@
     process.env.GIT_WIDGET_PORT_FILE = portFile;
     process.env.GIT_WIDGET_BRIDGE_JS = bridgeScript;
 
-    const requireFlag = `--require "${hookScript.replace(/"/g, '\\"')}"`;
+    const hookPosix = hookScript.replace(/\\/g, '/');
+    const requireFlag = `--require "${hookPosix.replace(/"/g, '\\"')}"`;
     const currentOpts = process.env.NODE_OPTIONS || '';
-    if (!currentOpts.includes(hookScript)) {
+    if (!currentOpts.includes(hookPosix) && !currentOpts.includes(hookScript)) {
       process.env.NODE_OPTIONS = currentOpts
         ? `${currentOpts} ${requireFlag}`
         : requireFlag;
