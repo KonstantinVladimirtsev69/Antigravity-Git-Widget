@@ -304,37 +304,6 @@ async fn install_update_preflight_no_host_and_single_flight_202_409() {
     let root = tmp_dir("gw_update_routes_install");
     let exe_bytes = b"MZ-TEST-EXE-PAYLOAD";
     let exe_hash = sha256_hex(exe_bytes);
-    let sums_text = format!("{exe_hash}  git-widget-sidecar.exe\r\n");
-
-    let (mock_base, _, asset_hits) = spawn_mock_github(move |path| {
-        if path.contains("/releases/latest") {
-            let base = path; // unused
-            let _ = base;
-            MockReply {
-                status: 200,
-                body: Vec::new(),
-                content_type: "application/json",
-                delay_ms: 0,
-            }
-        } else if path.ends_with("/SHA256SUMS.txt") {
-            MockReply {
-                status: 200,
-                body: sums_text.as_bytes().to_vec(),
-                content_type: "text/plain",
-                delay_ms: 0,
-            }
-        } else {
-            MockReply {
-                status: 200,
-                body: exe_bytes.to_vec(),
-                content_type: "application/octet-stream",
-                delay_ms: 0,
-            }
-        }
-    })
-    .await;
-    drop(mock_base);
-    drop(asset_hits);
 
     // Build mock server aware of its own base URL
     let base_holder = Arc::new(RwLock::new(String::new()));

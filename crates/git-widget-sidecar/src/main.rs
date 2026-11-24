@@ -45,6 +45,9 @@ use routes::{get_repos, init_config, post_config, status_handler, AppState};
 use rust_embed::Embed;
 use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::net::TcpListener;
+use update_routes::{
+    check_update_handler, install_update_handler, update_status_handler, UpdateManager,
+};
 use workspace::resolve_workspace;
 
 #[derive(Embed)]
@@ -90,22 +93,29 @@ async fn bind_loopback(preferred: u16) -> TcpListener {
         .expect("failed to bind loopback address 127.0.0.1")
 }
 
-async fn run_server(port: u16, port_file: Option<PathBuf>) {
+async fn run_server(port: u16, port_file: Option<PathBuf>, is_serve_mode: bool) {
+    self_update::cleanup_stale_update_dirs();
+    let listener = bind_loopback(port).await;
+    let addr = listener.local_addr().expect("failed reading local_addr");
+
     let state = Arc::new(AppState {
         ui_token: std::env::var("ANTIGRAVITY_SIDECAR_UI_TOKEN").ok(),
         agentapi_exe: std::env::var("ANTIGRAVITY_AGENTAPI_EXE").ok(),
         project_id: std::env::var("ANTIGRAVITY_PROJECT_ID").ok(),
         conversation_id: std::env::var("ANTIGRAVITY_CONVERSATION_ID").ok(),
         config: init_config(),
-        serve_port: None,
+        serve_port: if is_serve_mode { Some(addr.port()) } else { None },
         port_file: port_file.clone(),
-        update: Arc::new(update_routes::UpdateManager::new()),
+        update: Arc::new(UpdateManager::new()),
     });
 
     let app = Router::new()
         .route("/api/repos", get(get_repos))
         .route("/api/config", post(post_config))
         .route("/api/config/integration-mode", post(save_integration_mode_handler))
+        .route("/api/update/check", get(check_update_handler))
+        .route("/api/update/status", get(update_status_handler))
+        .route("/api/update/install", post(install_update_handler))
         .route("/api/resolve-workspace", post(resolve_workspace))
         .route("/api/status", get(status_handler))
         .route("/api/git/guarded", post(guarded_handler))
@@ -159,8 +169,6 @@ async fn run_server(port: u16, port_file: Option<PathBuf>) {
         .fallback(static_handler)
         .with_state(state);
 
-    let listener = bind_loopback(port).await;
-    let addr = listener.local_addr().expect("failed reading local_addr");
     if let Some(pf) = port_file {
         if let Some(parent) = pf.parent() {
             let _ = fs::create_dir_all(parent);
@@ -184,8 +192,12 @@ async fn main() {
         }
     };
 
+    let is_serve_mode = args.iter().any(|a| a == "--serve")
+        || matches!(&mode, CliMode::Serve { port_file: Some(_), .. })
+        || !has_ag_env;
+
     match mode {
-        CliMode::Serve { port, port_file } => run_server(port, port_file).await,
+        CliMode::Serve { port, port_file } => run_server(port, port_file, is_serve_mode).await,
         CliMode::Install {
             target,
             t3_dir,
@@ -213,6 +225,24 @@ async fn main() {
                 eprintln!("[git-widget] {err}");
             }
         }
-        CliMode::SelfUpdate { .. } => {}
+        CliMode::SelfUpdate {
+            parent_pid,
+            serve_port,
+            port_file,
+            ag_dir,
+            t3_local_dir,
+        } => {
+            if let Err(err) = self_update::run_self_update(
+                None,
+                parent_pid,
+                serve_port,
+                port_file.as_deref(),
+                ag_dir.as_deref(),
+                t3_local_dir.as_deref(),
+            ) {
+                eprintln!("[git-widget] {err}");
+                std::process::exit(1);
+            }
+        }
     }
 }

@@ -1,4 +1,4 @@
-//! CLI argument parsing for multi-host installer and standalone server mode.
+//! CLI argument parsing for multi-host installer, self-updater, and standalone server mode.
 
 use std::path::PathBuf;
 
@@ -54,16 +54,26 @@ fn parse_target(raw: &str) -> Result<InstallTarget, String> {
     }
 }
 
+fn parse_num<T: std::str::FromStr>(val: &str, flag: &str) -> Result<T, String> {
+    val.parse::<T>()
+        .map_err(|_| format!("Invalid {flag} value: '{val}'"))
+}
+
 pub fn parse_cli_args(args: &[String], has_antigravity_port_env: bool) -> Result<CliMode, String> {
     let mut is_install = false;
     let mut is_serve = false;
     let mut is_uninstall_t3 = false;
     let mut is_ensure_t3 = false;
+    let mut is_self_update = false;
     let mut auto_close_t3 = false;
     let mut target: Option<InstallTarget> = None;
     let mut t3_dir: Option<PathBuf> = None;
     let mut port: Option<u16> = None;
     let mut port_file: Option<PathBuf> = None;
+    let mut parent_pid: Option<u32> = None;
+    let mut serve_port: Option<u16> = None;
+    let mut ag_dir: Option<PathBuf> = None;
+    let mut t3_local_dir: Option<PathBuf> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -73,25 +83,29 @@ pub fn parse_cli_args(args: &[String], has_antigravity_port_env: bool) -> Result
             "--serve" => is_serve = true,
             "--uninstall-t3" => is_uninstall_t3 = true,
             "--ensure-t3-patched" => is_ensure_t3 = true,
+            "--self-update" => is_self_update = true,
             "--auto-close-t3" => auto_close_t3 = true,
-            "--target" => {
-                let val = next_value(args, &mut i, "--target")?;
-                target = Some(parse_target(&val)?);
-            }
-            "--t3-dir" => {
-                let val = next_value(args, &mut i, "--t3-dir")?;
-                t3_dir = Some(PathBuf::from(val));
-            }
-            "--port" => {
-                let val = next_value(args, &mut i, "--port")?;
-                let parsed = val
-                    .parse::<u16>()
-                    .map_err(|_| format!("Invalid --port value: '{val}'"))?;
-                port = Some(parsed);
-            }
+            "--target" => target = Some(parse_target(&next_value(args, &mut i, "--target")?)?),
+            "--t3-dir" => t3_dir = Some(PathBuf::from(next_value(args, &mut i, "--t3-dir")?)),
+            "--port" => port = Some(parse_num(&next_value(args, &mut i, "--port")?, "--port")?),
             "--port-file" => {
-                let val = next_value(args, &mut i, "--port-file")?;
-                port_file = Some(PathBuf::from(val));
+                port_file = Some(PathBuf::from(next_value(args, &mut i, "--port-file")?));
+            }
+            "--parent-pid" => {
+                parent_pid = Some(parse_num(
+                    &next_value(args, &mut i, "--parent-pid")?,
+                    "--parent-pid",
+                )?);
+            }
+            "--serve-port" => {
+                serve_port = Some(parse_num(
+                    &next_value(args, &mut i, "--serve-port")?,
+                    "--serve-port",
+                )?);
+            }
+            "--ag-dir" => ag_dir = Some(PathBuf::from(next_value(args, &mut i, "--ag-dir")?)),
+            "--t3-local-dir" => {
+                t3_local_dir = Some(PathBuf::from(next_value(args, &mut i, "--t3-local-dir")?));
             }
             other if other.starts_with("--target=") => {
                 target = Some(parse_target(&other["--target=".len()..])?);
@@ -100,20 +114,39 @@ pub fn parse_cli_args(args: &[String], has_antigravity_port_env: bool) -> Result
                 t3_dir = Some(PathBuf::from(&other["--t3-dir=".len()..]));
             }
             other if other.starts_with("--port=") => {
-                let val = &other["--port=".len()..];
-                port = Some(
-                    val.parse::<u16>()
-                        .map_err(|_| format!("Invalid --port value: '{val}'"))?,
-                );
+                port = Some(parse_num(&other["--port=".len()..], "--port")?);
             }
             other if other.starts_with("--port-file=") => {
                 port_file = Some(PathBuf::from(&other["--port-file=".len()..]));
+            }
+            other if other.starts_with("--parent-pid=") => {
+                parent_pid = Some(parse_num(&other["--parent-pid=".len()..], "--parent-pid")?);
+            }
+            other if other.starts_with("--serve-port=") => {
+                serve_port = Some(parse_num(&other["--serve-port=".len()..], "--serve-port")?);
+            }
+            other if other.starts_with("--ag-dir=") => {
+                ag_dir = Some(PathBuf::from(&other["--ag-dir=".len()..]));
+            }
+            other if other.starts_with("--t3-local-dir=") => {
+                t3_local_dir = Some(PathBuf::from(&other["--t3-local-dir=".len()..]));
             }
             _ => {}
         }
         i += 1;
     }
 
+    if is_self_update {
+        let pid = parent_pid
+            .ok_or_else(|| "Missing required --parent-pid for --self-update".to_string())?;
+        return Ok(CliMode::SelfUpdate {
+            parent_pid: pid,
+            serve_port,
+            port_file,
+            ag_dir,
+            t3_local_dir,
+        });
+    }
     if is_uninstall_t3 {
         return Ok(CliMode::UninstallT3 { t3_dir });
     }

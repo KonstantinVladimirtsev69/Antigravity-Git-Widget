@@ -112,6 +112,10 @@ pub fn merge_config_preserving_token(existing: &ScannerConfig, mut incoming: Sca
     if incoming.github_oauth_client_id.as_ref().is_none_or(|t| t.trim().is_empty()) {
         incoming.github_oauth_client_id = existing.github_oauth_client_id.clone();
     }
+    incoming.update_repo = incoming
+        .update_repo
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     incoming
 }
 
@@ -138,13 +142,26 @@ pub async fn post_config(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
+    if let Some(raw_repo) = incoming
+        .update_repo
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Err(e) = git_widget_core::updater::validate_update_repo(raw_repo) {
+            return map_err(e);
+        }
+    }
     let cfg = {
         let mut guard = st.config.write().await;
         let merged = merge_config_preserving_token(&guard, incoming);
-        let _ = save_config(&merged);
+        if !st.update.is_test_mode() {
+            let _ = save_config(&merged);
+        }
         *guard = merged.clone();
         merged
     };
+    st.update.invalidate_cache().await;
     match scan_with_cfg(&cfg).await {
         Ok(repos) => Json(ReposResponse {
             repos,
