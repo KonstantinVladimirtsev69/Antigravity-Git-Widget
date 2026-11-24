@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import type { ActionPreview, DualBranchSync, GuardedOpKind, ScannerConfig } from './types';
+import type { ActionPreview, DualBranchSync, GuardedOpKind } from './types';
 
 export { RemoteModal } from './RemoteModal';
+export { SettingsPanel } from './components/SettingsModal';
 
 interface DirtyModalProps {
   kind: GuardedOpKind;
@@ -151,88 +152,6 @@ export function UnpulledModal({
           </button>
           <button className="gw-btn" disabled={busy} onClick={onCancel}>
             Cancel
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface SettingsPanelProps {
-  config: ScannerConfig;
-  busy: boolean;
-  onSave: (cfg: ScannerConfig) => void;
-  onInitRepo: (path: string) => Promise<boolean>;
-  onClose: () => void;
-}
-
-export function SettingsPanel({
-  config,
-  busy,
-  onSave,
-  onInitRepo,
-  onClose,
-}: SettingsPanelProps) {
-  const [rootsText, setRootsText] = useState(config.roots.join('\n'));
-  const [depth, setDepth] = useState(String(config.max_depth));
-  const [newRepoPath, setNewRepoPath] = useState('');
-
-  const submit = () => {
-    const roots = rootsText
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const max_depth = Math.max(1, Math.min(6, Number(depth) || 3));
-    onSave({ ...config, roots, max_depth });
-  };
-
-  return (
-    <div className="gw-card gw-stack">
-      <div style={{ fontWeight: 600 }}>Scanner Roots</div>
-      <textarea
-        className="gw-textarea"
-        rows={2}
-        value={rootsText}
-        onChange={(e) => setRootsText(e.target.value)}
-      />
-      <div className="gw-row">
-        <span className="gw-muted">Depth:</span>
-        <input
-          className="gw-input"
-          style={{ width: 56 }}
-          type="number"
-          min={1}
-          max={6}
-          value={depth}
-          onChange={(e) => setDepth(e.target.value)}
-        />
-        <button className="gw-btn gw-btn-primary" disabled={busy} onClick={submit}>
-          Save
-        </button>
-        <button className="gw-btn" onClick={onClose}>
-          Close
-        </button>
-      </div>
-      <div style={{ borderTop: '1px solid var(--gw-border)', paddingTop: 6 }} className="gw-stack">
-        <span className="gw-muted">Init new Git repository:</span>
-        <div className="gw-row">
-          <input
-            className="gw-input"
-            placeholder="C:\Projects\my-new-app"
-            value={newRepoPath}
-            onChange={(e) => setNewRepoPath(e.target.value)}
-          />
-          <button
-            className="gw-btn"
-            disabled={busy || !newRepoPath.trim()}
-            onClick={() => {
-              const p = newRepoPath.trim();
-              void onInitRepo(p).then((ok) => {
-                if (ok) setNewRepoPath('');
-              });
-            }}
-          >
-            Init
           </button>
         </div>
       </div>
