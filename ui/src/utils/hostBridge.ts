@@ -10,10 +10,7 @@ export async function deliverPromptToHost(
   const trimmed = prompt.trim();
   if (!trimmed) return 'Empty prompt ignored';
   if (IS_T3_HOST && window.parent && window.parent !== window) {
-    window.parent.postMessage(
-      { type: 'git-widget-ask-ai', prompt: trimmed },
-      window.location.origin,
-    );
+    window.parent.postMessage({ type: 'git-widget-ask-ai', prompt: trimmed }, '*');
     return 'Prompt sent to T3 Code composer';
   }
   await navigator.clipboard.writeText(trimmed);

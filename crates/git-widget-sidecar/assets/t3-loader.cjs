@@ -58,6 +58,32 @@
       if (electron && electron.app && typeof electron.app.once === 'function') {
         electron.app.once('will-quit', cleanup);
         electron.app.once('before-quit', cleanup);
+        electron.app.on('browser-window-created', (_ev, win) => {
+          try {
+            if (!win || !win.webContents) return;
+            win.webContents.on('dom-ready', () => {
+              try {
+                const url = win.webContents.getURL() || '';
+                if (!url || url.startsWith('data:') || url.startsWith('about:')) return;
+                const inject = (attempt) => {
+                  try {
+                    const port = fs.existsSync(portFile)
+                      ? fs.readFileSync(portFile, 'utf8').trim()
+                      : '';
+                    if (!port || !/^\d+$/.test(port)) {
+                      if (attempt < 20) setTimeout(() => inject(attempt + 1), 150);
+                      return;
+                    }
+                    const bridgeSrc = fs.readFileSync(bridgeScript, 'utf8');
+                    const payload = `window.__GW_T3_BASE_URL = "http://127.0.0.1:${port}";\n${bridgeSrc}`;
+                    win.webContents.executeJavaScript(payload).catch(() => {});
+                  } catch (_) {}
+                };
+                inject(0);
+              } catch (_) {}
+            });
+          } catch (_) {}
+        });
       }
     } catch (_) {}
 

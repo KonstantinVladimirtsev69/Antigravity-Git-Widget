@@ -5,7 +5,8 @@
   if (window.__gwT3BridgeMounted) return;
   window.__gwT3BridgeMounted = true;
 
-  const ORIGIN = window.location.origin;
+  const BASE_URL = window.__GW_T3_BASE_URL || '/git-widget';
+  const IFRAME_ORIGIN = new URL(BASE_URL, window.location.origin).origin;
   const threadWorkspaces = new Map();
   const projectWorkspaces = new Map();
   let lastSentWorkspace = undefined;
@@ -15,17 +16,18 @@
 
   const CSS = `
     #gw-t3-toggle-btn {
-      position: fixed; top: 8px; right: 12px; z-index: 9998; height: 28px; padding: 0 10px;
-      border-radius: 6px; border: 1px solid var(--border, rgba(128,128,128,0.35));
+      position: fixed; bottom: 14px; right: 16px; z-index: 9998; height: 30px; padding: 0 12px;
+      border-radius: 8px; border: 1px solid var(--border, rgba(128,128,128,0.4));
       background: var(--card, rgba(24,24,27,0.92)); color: var(--foreground, #f4f4f5);
       font-size: 12px; font-weight: 600; cursor: pointer; backdrop-filter: blur(6px);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35); -webkit-app-region: no-drag;
     }
     #gw-t3-drawer {
       position: fixed; top: 0; right: 0; width: min(440px, 92vw); height: 100vh; z-index: 9999;
       display: flex; flex-direction: column; background: var(--background, #131316);
       border-left: 1px solid var(--border, rgba(128,128,128,0.35));
       box-shadow: -8px 0 28px rgba(0,0,0,0.45); transform: translateX(100%);
-      transition: transform 160ms ease-out;
+      transition: transform 160ms ease-out; -webkit-app-region: no-drag;
     }
     #gw-t3-drawer.open { transform: translateX(0); }
     #gw-t3-drawer-hdr {
@@ -72,7 +74,7 @@
     try {
       iframeEl.contentWindow.postMessage(
         { type: 'theme-change', payload: { cssVariables: collectThemeVars() } },
-        ORIGIN
+        IFRAME_ORIGIN
       );
     } catch (_) {}
   }
@@ -123,7 +125,7 @@
     try {
       iframeEl.contentWindow.postMessage(
         { type: 'workspace-change', payload: { workspaceUris: ws ? [ws] : [] } },
-        ORIGIN
+        IFRAME_ORIGIN
       );
     } catch (_) {}
   }
@@ -201,7 +203,7 @@
   }
 
   window.addEventListener('message', (event) => {
-    if (event.origin !== ORIGIN) return;
+    if (event.origin !== IFRAME_ORIGIN) return;
     const data = event.data;
     if (!data || data.type !== 'git-widget-ask-ai') return;
     const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
@@ -225,7 +227,7 @@
     if (!drawerEl) return;
     drawerEl.classList.toggle('open', open);
     if (open) {
-      if (!iframeEl.src) iframeEl.src = '/git-widget/?host=t3code';
+      if (!iframeEl.src) iframeEl.src = `${BASE_URL}/?host=t3code`;
       postTheme();
       syncWorkspace(true);
     }
