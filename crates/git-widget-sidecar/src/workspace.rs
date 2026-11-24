@@ -1,4 +1,4 @@
-//! Workspace URI resolution helper for Antigravity `workspace-change` events.
+//! Workspace URI & Windows path resolution helper for Antigravity & T3 Code `workspace-change` events.
 
 use crate::routes::{check_auth, scan_with_cfg, AppState};
 use axum::{
@@ -38,22 +38,27 @@ fn percent_decode(input: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
-fn normalize_path_str(p: &Path) -> String {
+pub(crate) fn normalize_path_str(p: &Path) -> String {
     let s = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    let text = s.to_string_lossy().to_string();
+    let text = s.to_string_lossy().replace('/', "\\");
     text.strip_prefix(r"\\?\")
         .unwrap_or(&text)
         .trim_end_matches('\\')
         .to_lowercase()
 }
 
-fn uri_to_path(uri: &str) -> PathBuf {
+pub(crate) fn uri_to_path(uri: &str) -> PathBuf {
     let trimmed = uri
+        .trim()
         .strip_prefix("file:///")
-        .or_else(|| uri.strip_prefix("file://"))
-        .unwrap_or(uri);
-    let decoded = percent_decode(trimmed).replace('/', "\\");
-    PathBuf::from(decoded)
+        .or_else(|| uri.trim().strip_prefix("file://"))
+        .unwrap_or(uri.trim());
+    let decoded = percent_decode(trimmed)
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&percent_decode(trimmed))
+        .replace('/', "\\");
+    let clean = decoded.trim_end_matches('\\');
+    PathBuf::from(clean)
 }
 
 pub async fn resolve_workspace(
@@ -68,6 +73,9 @@ pub async fn resolve_workspace(
     let repos = scan_with_cfg(&cfg).await.unwrap_or_default();
 
     for uri in &body.workspace_uris {
+        if uri.trim().is_empty() {
+            continue;
+        }
         let ws = uri_to_path(uri);
         let ws_norm = normalize_path_str(&ws);
         if let Some(found) = repos.iter().find(|r| {
@@ -95,4 +103,23 @@ pub async fn resolve_workspace(
         }
     }
     Json(serde_json::json!({ "matched_path": null })).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_path_str, uri_to_path};
+    use std::path::Path;
+
+    #[test]
+    fn normalizes_cyrillic_spaces_file_uris_and_mixed_slashes() {
+        let p1 = uri_to_path("file:///C:/Users/%D0%9A%D0%BE%D0%BD%D1%81%D1%82%D0%B0%D0%BD%D1%82%D0%B8%D0%BD/My%20Projects/git-widget/");
+        let p2 = uri_to_path(r"\\?\C:\Users\Константин\My Projects\git-widget");
+        let p3 = uri_to_path("C:/Users/Константин/My Projects/git-widget");
+        assert_eq!(normalize_path_str(&p1), normalize_path_str(&p2));
+        assert_eq!(normalize_path_str(&p2), normalize_path_str(&p3));
+        assert_eq!(
+            normalize_path_str(Path::new(r"C:\Projects\chats\git-widget\")),
+            r"c:\projects\chats\git-widget"
+        );
+    }
 }

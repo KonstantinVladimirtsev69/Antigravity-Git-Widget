@@ -13,6 +13,7 @@ import { PrPanel } from './PrPanel';
 import { StashPanel } from './StashPanel';
 import { useIntegrationFlow } from './hooks/useIntegrationFlow';
 import { MODE_STORAGE_KEY, VALID_MODES, useRepoData } from './hooks/useRepoData';
+import { IS_T3_HOST, deliverPromptToHost } from './utils/hostBridge';
 
 declare global {
   interface Window {
@@ -66,7 +67,9 @@ export default function App() {
             return;
           }
         }
-        data.setSelectedRepo((prev) => prev || res.repos[0]?.path || '');
+        if (!IS_T3_HOST) {
+          data.setSelectedRepo((prev) => prev || res.repos[0]?.path || '');
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -76,12 +79,12 @@ export default function App() {
   useEffect(() => {
     if (!window.__gwBridge) return;
     return window.__gwBridge.subscribe((uris) => {
-      if (uris.length === 0) return;
+      if (uris.length === 0) {
+        if (IS_T3_HOST) { data.setSelectedRepo(''); data.setAutoMatched(false); }
+        return;
+      }
       void api.resolveWorkspace(uris).then((res) => {
-        if (res.matched_path) {
-          data.setSelectedRepo(res.matched_path);
-          data.setAutoMatched(true);
-        }
+        if (res.matched_path) { data.setSelectedRepo(res.matched_path); data.setAutoMatched(true); }
       });
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -91,6 +94,13 @@ export default function App() {
     data.tab === 'diff' || data.diffMode !== 'working'
       ? data.diffFiles.length
       : (status?.changes.length ?? data.diffFiles.length);
+
+  const handleSuggestCommit = async () => {
+    await flow.runSimple(async () => {
+      const res = await api.suggestCommit(selectedRepo, CONVERSATION_ID);
+      return { message: await deliverPromptToHost(res.prompt, res.sent, 'Asked AI chat for commit message') };
+    });
+  };
 
   return (
     <div className="gw-stack">
@@ -159,6 +169,12 @@ export default function App() {
             }
           }}
         />
+      )}
+
+      {IS_T3_HOST && !selectedRepo && !showSettings && (
+        <div className="gw-card gw-muted" style={{ textAlign: 'center', padding: 16 }}>
+          Откройте тред в T3 Code, чтобы синхронизировать репозиторий.
+        </div>
       )}
 
       {data.tab === 'diff' && selectedRepo && (
@@ -235,14 +251,7 @@ export default function App() {
             unstaged={status.unstaged_changes}
             busy={busy}
             onCommit={async (msg, amend) => { await flow.runSimple(() => api.commitAll(selectedRepo, msg, amend)); }}
-            onSuggestCommit={async () => {
-              await flow.runSimple(async () => {
-                const res = await api.suggestCommit(selectedRepo, CONVERSATION_ID);
-                if (res.sent) return { message: 'Asked AI chat for commit message' };
-                await navigator.clipboard.writeText(res.prompt);
-                return { message: 'Copied diff summary to clipboard' };
-              });
-            }}
+            onSuggestCommit={handleSuggestCommit}
             onUndoCommit={async () => { await flow.runSimple(() => api.undoCommit(selectedRepo)); }}
             onStageFile={(p) => void flow.runSimple(async () => { await api.stageFile(selectedRepo, p); return { message: `Staged ${p}` }; })}
             onUnstageFile={(p) => void flow.runSimple(async () => { await api.unstageFile(selectedRepo, p); return { message: `Unstaged ${p}` }; })}

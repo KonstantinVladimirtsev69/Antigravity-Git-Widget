@@ -1,5 +1,6 @@
-//! Self-installer for standalone `git-widget-sidecar.exe` distribution.
+//! Multi-host self-installer for `git-widget-sidecar.exe` (Antigravity 2.0 + T3 Code).
 
+use git_widget_sidecar::{cli::InstallTarget, t3_installer};
 use std::{
     fs,
     io::{self, Write},
@@ -18,41 +19,54 @@ const LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
 </svg>
 "##;
 
-/// Returns `true` if the binary should run as an installer instead of a sidecar server.
-pub fn should_run_installer() -> bool {
-    let args: Vec<String> = std::env::args().collect();
-    if args.iter().any(|a| a == "--install") {
-        return true;
+fn prompt_target_selection() -> InstallTarget {
+    println!("=== Git Widget Installer ===");
+    println!("Select installation target:");
+    println!("  [1] Antigravity 2.0 (AUX_PANE plugin)");
+    println!("  [2] T3 Code (Desktop + Tailscale Mobile Web)");
+    println!("  [3] Both (Antigravity 2.0 + T3 Code)");
+    print!("Enter choice [1/2/3] (default 3): ");
+    let _ = io::stdout().flush();
+    let mut input = String::new();
+    let _ = io::stdin().read_line(&mut input);
+    match input.trim() {
+        "1" => InstallTarget::Antigravity,
+        "2" => InstallTarget::T3Code,
+        _ => InstallTarget::Both,
     }
-    if args.iter().any(|a| a == "--serve") {
-        return false;
-    }
-    std::env::var_os("ANTIGRAVITY_SIDECAR_WEB_PORT").is_none()
 }
 
-pub fn run_self_install() {
-    let explicit_flag = std::env::args().any(|a| a == "--install");
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .expect("Cannot resolve USERPROFILE / HOME directory");
-
-    let plugin_dir = home
-        .join(".gemini")
-        .join("config")
-        .join("plugins")
-        .join("git-widget");
-
-    let current_exe = std::env::current_exe().expect("Cannot locate current executable");
-    match install_to_dir(&current_exe, &plugin_dir, true) {
-        Ok(target_exe) => {
-            println!("[git-widget] Installed successfully!");
-            println!("  Plugin dir : {}", plugin_dir.display());
-            println!("  Executable : {}", target_exe.display());
-            println!("\nRestart Antigravity 2.0 or open 'Git Widget' in the right auxiliary pane.");
+pub fn run_install(
+    target_opt: Option<InstallTarget>,
+    t3_dir: Option<&Path>,
+    explicit_flag: bool,
+    auto_close_t3: bool,
+) -> Result<(), String> {
+    let interactive = !explicit_flag || target_opt.is_none();
+    let target = target_opt.unwrap_or_else(|| {
+        if explicit_flag {
+            InstallTarget::Antigravity
+        } else {
+            prompt_target_selection()
         }
-        Err(err) => {
-            eprintln!("[git-widget] Installation failed: {err}");
+    });
+
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Cannot locate current executable: {e}"))?;
+
+    let mut errors: Vec<String> = Vec::new();
+
+    if matches!(target, InstallTarget::Antigravity | InstallTarget::Both) {
+        if let Err(e) = install_antigravity(&current_exe) {
+            eprintln!("[git-widget] Antigravity installation failed: {e}");
+            errors.push(e);
+        }
+    }
+
+    if matches!(target, InstallTarget::T3Code | InstallTarget::Both) {
+        if let Err(e) = t3_installer::install_t3_code(&current_exe, t3_dir, auto_close_t3, interactive) {
+            eprintln!("[git-widget] T3 Code installation failed: {e}");
+            errors.push(e);
         }
     }
 
@@ -62,6 +76,32 @@ pub fn run_self_install() {
         let mut buf = String::new();
         let _ = io::stdin().read_line(&mut buf);
     }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+fn install_antigravity(current_exe: &Path) -> Result<(), String> {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| "Cannot resolve USERPROFILE / HOME directory".to_string())?;
+
+    let plugin_dir = home
+        .join(".gemini")
+        .join("config")
+        .join("plugins")
+        .join("git-widget");
+
+    let target_exe =
+        install_to_dir(current_exe, &plugin_dir, true).map_err(|e| e.to_string())?;
+    println!("[git-widget] Antigravity 2.0 plugin installed!");
+    println!("  Plugin dir : {}", plugin_dir.display());
+    println!("  Executable : {}", target_exe.display());
+    Ok(())
 }
 
 pub fn install_to_dir(
@@ -148,7 +188,10 @@ fn stop_other_instances() {
 #[cfg(test)]
 mod tests {
     use super::install_to_dir;
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn installs_plugin_manifests_and_binary() {
