@@ -66,6 +66,14 @@ const mockT3 = http.createServer((request, response) => {
     response.end(html);
     return;
   }
+  if (request.url === '/chunked-no-writehead') {
+    // Mirrors Effect HTTP in T3 Code: setHeader + write/end without calling writeHead
+    response.statusCode = 200;
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.write('<!doctype html><html><body>');
+    response.end('<div id="root">T3 Chunked</div></body></html>');
+    return;
+  }
   response.writeHead(404);
   response.end('Not found');
 });
@@ -97,12 +105,20 @@ try {
   assert.equal(okBearer.status, 200);
   assert.equal(JSON.parse(okBearer.body).receivedUrl, '/api/repos');
 
-  // HTML injection into index.html
+  // HTML injection into index.html (writeHead path)
   const htmlRes = await req(t3Port, '/', { accept: 'text/html' });
   assert.equal(htmlRes.status, 200);
   assert.ok(
     htmlRes.body.includes('<script src="/git-widget/t3-ui-bridge.js" defer></script>'),
     'index.html must include injected bridge script tag'
+  );
+
+  // HTML injection into Effect HTTP style response (setHeader + write/end, no writeHead)
+  const chunkedRes = await req(t3Port, '/chunked-no-writehead', { accept: 'text/html' });
+  assert.equal(chunkedRes.status, 200);
+  assert.ok(
+    chunkedRes.body.includes('<script src="/git-widget/t3-ui-bridge.js" defer></script>'),
+    'chunked setHeader response must include injected bridge script tag'
   );
 
   // Bridge script served

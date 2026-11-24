@@ -144,20 +144,20 @@
       });
     }
 
-    function wrapHtmlInjection(res) {
+    function wrapHtmlInjection(req, res) {
+      delete req.headers['accept-encoding'];
       const origWriteHead = res.writeHead.bind(res);
       const origWrite = res.write.bind(res);
       const origEnd = res.end.bind(res);
+      let decided = false;
       let isHtml = false;
       let chunks = [];
-      let savedStatus = 200;
+      let savedStatus = null;
       let savedHeaders = null;
 
-      res.writeHead = function (statusCode, statusMsg, headersObj) {
-        let hdrs = headersObj;
-        if (typeof statusMsg === 'object' && statusMsg !== null) {
-          hdrs = statusMsg;
-        }
+      function decide(hdrs) {
+        if (decided) return isHtml;
+        decided = true;
         const ct =
           (hdrs && (hdrs['content-type'] || hdrs['Content-Type'])) ||
           res.getHeader('content-type') ||
@@ -166,20 +166,30 @@
           (hdrs && (hdrs['content-encoding'] || hdrs['Content-Encoding'])) ||
           res.getHeader('content-encoding') ||
           '';
-        if (String(ct).includes('text/html') && !ce) {
-          isHtml = true;
+        isHtml = String(ct).includes('text/html') && !ce;
+        if (isHtml) {
+          res.removeHeader('content-length');
+        }
+        return isHtml;
+      }
+
+      res.writeHead = function (statusCode, statusMsg, headersObj) {
+        let hdrs = headersObj;
+        if (typeof statusMsg === 'object' && statusMsg !== null) {
+          hdrs = statusMsg;
+        }
+        if (decide(hdrs)) {
           savedStatus = statusCode;
           savedHeaders = hdrs ? { ...hdrs } : {};
           delete savedHeaders['content-length'];
           delete savedHeaders['Content-Length'];
-          res.removeHeader('content-length');
           return res;
         }
         return origWriteHead.apply(res, arguments);
       };
 
       res.write = function (chunk, encoding) {
-        if (!isHtml) return origWrite.apply(res, arguments);
+        if (!decide(null)) return origWrite.apply(res, arguments);
         if (chunk) {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
         }
@@ -187,7 +197,7 @@
       };
 
       res.end = function (chunk, encoding) {
-        if (!isHtml) return origEnd.apply(res, arguments);
+        if (!decide(null)) return origEnd.apply(res, arguments);
         if (chunk) {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
         }
@@ -200,9 +210,17 @@
           }
         }
         const outBuf = Buffer.from(html, 'utf8');
-        const outHeaders = savedHeaders || {};
-        outHeaders['content-length'] = String(outBuf.length);
-        origWriteHead(savedStatus, outHeaders);
+        res.writeHead = origWriteHead;
+        res.write = origWrite;
+        res.end = origEnd;
+        if (savedStatus !== null) {
+          const outHeaders = savedHeaders || {};
+          outHeaders['content-length'] = String(outBuf.length);
+          origWriteHead(savedStatus, outHeaders);
+        } else {
+          res.removeHeader('transfer-encoding');
+          res.setHeader('content-length', String(outBuf.length));
+        }
         return origEnd(outBuf);
       };
     }
@@ -245,7 +263,7 @@
           !urlPath.startsWith('/assets/') &&
           String(req.headers.accept || '').includes('text/html')
         ) {
-          wrapHtmlInjection(res);
+          wrapHtmlInjection(req, res);
         }
       }
       return origEmit.apply(this, arguments);
