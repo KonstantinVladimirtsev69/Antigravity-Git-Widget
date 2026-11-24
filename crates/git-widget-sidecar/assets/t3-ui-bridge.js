@@ -15,7 +15,7 @@
   const threadWorkspaces = new Map();
   let lastSentWorkspace = undefined;
   let drawerOpen = false;
-  let customResized = false;
+  let suppressToggleClose = false;
   let drawerWidth = (() => {
     try {
       const saved = Number(localStorage.getItem(WIDTH_KEY));
@@ -112,24 +112,29 @@
     try { iframeEl.contentWindow.postMessage({ type: 'workspace-change', payload: { workspaceUris: ws ? [ws] : [] } }, IFRAME_ORIGIN); } catch (_) {}
   }
 
+  function isT3RightPanelOpen() {
+    const surface = document.querySelector('[data-right-panel-surface-content]');
+    if (surface && surface.getBoundingClientRect().width > 80) return true;
+    const toggle = document.querySelector('[data-right-panel-toggle]');
+    if (toggle && (toggle.getAttribute('aria-pressed') === 'true' || toggle.getAttribute('data-state') === 'open')) {
+      return true;
+    }
+    return Boolean(findOpenPanelAnchor());
+  }
+
+  function closeT3RightPanelIfOpen() {
+    if (!isT3RightPanelOpen()) return;
+    const toggle = document.querySelector('[data-right-panel-toggle]');
+    if (!toggle) return;
+    suppressToggleClose = true;
+    try { toggle.click(); } catch (_) {}
+    setTimeout(() => { suppressToggleClose = false; }, 120);
+  }
+
   function positionDrawer() {
     if (!drawerEl || !drawerOpen) {
       document.documentElement.classList.remove('gw-t3-pushed');
       return;
-    }
-    const panel = document.querySelector('[data-right-panel-surface-content]');
-    if (panel && !customResized) {
-      const r = panel.getBoundingClientRect();
-      if (r.width >= 260 && r.height >= 240) {
-        document.documentElement.classList.remove('gw-t3-pushed');
-        const top = Math.max(40, Math.round(r.top));
-        applyWidthVar(r.width);
-        Object.assign(drawerEl.style, {
-          top: `${top}px`, left: `${Math.round(r.left)}px`, right: 'auto',
-          width: `${Math.round(r.width)}px`, height: `${Math.max(240, Math.round(window.innerHeight - top))}px`,
-        });
-        return;
-      }
     }
     const w = applyWidthVar(drawerWidth);
     const canPush = window.innerWidth >= 960;
@@ -143,7 +148,6 @@
   function bindResizer(resizerEl) {
     resizerEl.addEventListener('mousedown', (ev) => {
       ev.preventDefault();
-      customResized = true;
       resizerEl.classList.add('dragging');
       document.documentElement.classList.add('gw-t3-resizing');
       if (iframeEl) iframeEl.style.pointerEvents = 'none';
@@ -173,7 +177,9 @@
     if (toggle && toggle.parentElement) {
       if (!toggle.dataset.gwBound) {
         toggle.dataset.gwBound = '1';
-        toggle.addEventListener('click', () => { if (drawerOpen) setDrawerOpen(false); }, true);
+        toggle.addEventListener('click', () => {
+          if (!suppressToggleClose && drawerOpen) setDrawerOpen(false);
+        }, true);
       }
       if (!btn) {
         btn = document.createElement('button');
@@ -191,11 +197,24 @@
     }
   }
 
+  function findOpenPanelAnchor() {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    for (const b of buttons) {
+      if (b.id === 'gw-t3-panel-item' || b.offsetParent === null) continue;
+      const txt = (b.textContent || '').trim();
+      if (!/^(Боковой чат|Side chat|Устройство|Device|Пул-реквест|Pull request)/i.test(txt)) continue;
+      const parent = b.parentElement;
+      if (!parent) continue;
+      const siblings = Array.from(parent.querySelectorAll(':scope > button'));
+      const hasTermOrDiff = siblings.some((s) => /(Терминал|Terminal|Дифф|Diff|Файлы|Files)/i.test(s.textContent || ''));
+      if (siblings.length >= 3 && hasTermOrDiff) return b;
+    }
+    return null;
+  }
+
   function ensurePanelMenuItem() {
-    const surface = document.querySelector('[data-right-panel-surface-content]');
-    if (!surface || surface.querySelector('#gw-t3-panel-item')) return;
-    const buttons = Array.from(surface.querySelectorAll('button'));
-    const anchor = buttons.find((b) => /(Дифф|Diff|Пул-реквест|Pull request|Боковой чат|Side chat)/i.test(b.textContent || ''));
+    if (document.getElementById('gw-t3-panel-item')) return;
+    const anchor = findOpenPanelAnchor();
     if (!anchor || !anchor.parentElement) return;
     const item = document.createElement('button');
     item.type = 'button';
@@ -259,7 +278,7 @@
 
   function setDrawerOpen(open) {
     drawerOpen = open;
-    if (!open) customResized = false;
+    if (open) closeT3RightPanelIfOpen();
     if (!drawerEl) return;
     drawerEl.classList.toggle('open', open);
     positionDrawer();
