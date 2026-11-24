@@ -1,6 +1,9 @@
 //! Core HTTP state, auth, config, workspace resolution, and status route handlers.
 
-use crate::config::{load_config, save_config};
+use crate::{
+    config::{load_config, save_config},
+    update_routes::UpdateManager,
+};
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
@@ -26,6 +29,9 @@ pub struct AppState {
     pub project_id: Option<String>,
     pub conversation_id: Option<String>,
     pub config: Arc<RwLock<ScannerConfig>>,
+    pub serve_port: Option<u16>,
+    pub port_file: Option<PathBuf>,
+    pub update: Arc<UpdateManager>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +40,7 @@ pub struct PublicScannerConfig {
     pub max_depth: usize,
     pub integration_mode: IntegrationMode,
     pub has_github_token: bool,
+    pub update_repo: Option<String>,
 }
 
 impl From<&ScannerConfig> for PublicScannerConfig {
@@ -43,6 +50,7 @@ impl From<&ScannerConfig> for PublicScannerConfig {
             max_depth: cfg.max_depth,
             integration_mode: cfg.integration_mode,
             has_github_token: cfg.github_token.as_ref().is_some_and(|t| !t.trim().is_empty()),
+            update_repo: cfg.update_repo.clone(),
         }
     }
 }
@@ -104,6 +112,10 @@ pub fn merge_config_preserving_token(existing: &ScannerConfig, mut incoming: Sca
     if incoming.github_oauth_client_id.as_ref().is_none_or(|t| t.trim().is_empty()) {
         incoming.github_oauth_client_id = existing.github_oauth_client_id.clone();
     }
+    incoming.update_repo = incoming
+        .update_repo
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     incoming
 }
 
@@ -130,13 +142,26 @@ pub async fn post_config(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
+    if let Some(raw_repo) = incoming
+        .update_repo
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Err(e) = git_widget_core::updater::validate_update_repo(raw_repo) {
+            return map_err(e);
+        }
+    }
     let cfg = {
         let mut guard = st.config.write().await;
         let merged = merge_config_preserving_token(&guard, incoming);
-        let _ = save_config(&merged);
+        if !st.update.is_test_mode() {
+            let _ = save_config(&merged);
+        }
         *guard = merged.clone();
         merged
     };
+    st.update.invalidate_cache().await;
     match scan_with_cfg(&cfg).await {
         Ok(repos) => Json(ReposResponse {
             repos,
@@ -202,6 +227,7 @@ mod tests {
             github_token: Some("ghp_super_secret".into()),
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Rebase,
+            update_repo: None,
         };
         let pub_cfg = PublicScannerConfig::from(&secret);
         let serialized = serde_json::to_string(&pub_cfg).unwrap();
@@ -214,6 +240,7 @@ mod tests {
             github_token: None,
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Squash,
+            update_repo: None,
         };
         let merged = merge_config_preserving_token(&secret, incoming);
         assert_eq!(merged.github_token.as_deref(), Some("ghp_super_secret"));

@@ -2,7 +2,7 @@
 
 # Antigravity Git Widget
 
-**Native VS Code-style Source Control, Commit Graph & Per-Hunk AI Diff Review for Antigravity 2.0 (`AUX_PANE`)**
+**Native VS Code-style Source Control, Commit Graph & Per-Hunk AI Diff Review for Antigravity 2.0 (`AUX_PANE`) & T3 Code (Desktop + Mobile Web)**
 
 [![Rust](https://img.shields.io/badge/Rust-1.85%2B-f74c00?logo=rust)](https://www.rust-lang.org/)
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](https://react.dev/)
@@ -14,7 +14,7 @@
 </div>
 
 > [!NOTE]
-> **Windows 10/11 only:** Prebuilt binaries (`git-widget-sidecar.exe`) and the installer currently target **Windows** (`Antigravity 2.0`). macOS and Linux builds are not yet provided or tested.
+> **Windows 10/11 only:** Prebuilt binaries (`git-widget-sidecar.exe`) and the multi-host installer currently target **Windows** (`Antigravity 2.0` & `T3 Code`). macOS and Linux builds are not yet provided or tested.
 
 ---
 
@@ -52,6 +52,8 @@ Antigravity 2.0 orchestrates AI agents outside a traditional IDE, but lacks a na
 | **SVG Commit Graph** | Multi-lane colored SVG graph, `HEAD` / `local` / `☁ remote` / `tag` pills, **developer filter chips**, commit file stats (`+ins / -del`), `Copy Hash`, `Cherry-Pick`, and `Open on GitHub ↗`. |
 | **Diff Review & AI Chat** | Inspect **Working Tree**, **Branch Diff** (`base...HEAD`), or any historical **Commit**. Accept (`✓`) or reject (`✕`) individual hunks or whole files, or click **`💬 AI`** to send any diff snippet + question straight into the active Antigravity conversation. |
 | **GitHub & Remotes** | Create a new **Public / Private** GitHub repository from inside the widget (`Create on GitHub`), link existing remotes, or open/create Pull Requests (`+ Create PR ↗`). |
+| **T3 Code Integration** | Optional integration into **T3 Code** Desktop & Mobile Web (Tailscale) via non-invasive `boot.cjs` ASAR hook, `/git-widget/*` HTTP proxy, resizable docked drawer, and Task Scheduler auto-repatcher (`--ensure-t3-patched`). |
+| **In-App Self-Updater** | Checks GitHub `releases/latest` (6h TTL cache + manual `Check for updates`), shows `Update vX.Y.Z` badge with release notes, verifies `SHA256SUMS.txt`, and updates all installed hosts in 1 click without killing T3 Code or altering `app.asar`. |
 
 ---
 
@@ -77,9 +79,9 @@ git-widget/
 ### Option 1: Single-File Installer (No Rust / Node.js required)
 
 1. Download **`git-widget-sidecar.exe`** from [GitHub Releases](../../releases).
-2. **Double-click `git-widget-sidecar.exe`** (or run `.\git-widget-sidecar.exe --install` in PowerShell).
-3. It automatically installs itself into `%USERPROFILE%\.gemini\config\plugins\git-widget\` and configures `sidecar.json` for Antigravity 2.0.
-4. Restart Antigravity 2.0 or open **Git Widget** in the right auxiliary pane.
+2. **Double-click `git-widget-sidecar.exe`** (or run `.\git-widget-sidecar.exe --install` in PowerShell) and choose your host: **Antigravity 2.0**, **T3 Code**, or **Both** (or pass `--target antigravity|t3code|both`).
+3. It installs into `%USERPROFILE%\.gemini\config\plugins\git-widget\` (Antigravity) and/or `%LOCALAPPDATA%\git-widget\` (T3 Code).
+4. Restart Antigravity 2.0 / T3 Code or open **Git Widget** in the right pane. Future updates can be installed directly inside the widget via **Update vX.Y.Z → Install & Restart**.
 
 ### Option 2: From Source (PowerShell)
 

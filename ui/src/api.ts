@@ -18,7 +18,21 @@ import type {
   ReposResponse,
   ScannerConfig,
   StashEntry,
+  UpdateCheckResponse,
+  UpdateStatusResponse,
 } from './types';
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly body?: unknown;
+
+  constructor(status: number, message: string, body?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+}
 
 const params = new URLSearchParams(window.location.search);
 const SIDE_TOKEN = params.get('token') ?? '';
@@ -33,19 +47,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { ...init, headers });
   const text = await res.text();
   if (!res.ok) {
-    let msg = text;
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(text) as { error?: string };
-      if (parsed.error) msg = parsed.error;
+      parsed = JSON.parse(text);
     } catch {
       // raw text
     }
-    throw new Error(msg || `HTTP ${res.status}`);
+    const msg = (parsed as { error?: string } | undefined)?.error || text || `HTTP ${res.status}`;
+    throw new ApiError(res.status, msg, parsed);
   }
   return JSON.parse(text) as T;
 }
 
 export const api = {
+  checkUpdate: (force = false) =>
+    request<UpdateCheckResponse>(`./api/update/check${force ? '?force=true' : ''}`),
+  getUpdateStatus: () => request<UpdateStatusResponse>('./api/update/status'),
+  installUpdate: () =>
+    request<UpdateStatusResponse>('./api/update/install', { method: 'POST', body: '{}' }),
   getRepos: () => request<ReposResponse>('./api/repos'),
   saveConfig: (config: ScannerConfig) =>
     request<ReposResponse>('./api/config', { method: 'POST', body: JSON.stringify(config) }),

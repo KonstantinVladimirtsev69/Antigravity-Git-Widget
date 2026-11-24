@@ -1,14 +1,12 @@
-//! Antigravity 2.0 Sidecar HTTP server with embedded React Web UI.
+//! Antigravity 2.0 & T3 Code Sidecar HTTP server with embedded React Web UI.
 
 mod branch_routes;
-mod config;
 mod diff_routes;
 mod git_routes;
 mod github_routes;
 mod graph_routes;
 mod installer;
 mod integrate_routes;
-mod routes;
 mod workspace;
 
 use axum::{
@@ -26,6 +24,15 @@ use diff_routes::{
     accept_hunk_handler, ask_ai_handler, commits_list_handler, diff_list_handler,
     discard_file_handler, reject_hunk_handler, stage_file_handler, unstage_file_handler,
 };
+use git_routes::{
+    abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, guarded_handler,
+    init_repo_handler, preview_merge_handler, preview_push_handler, publish_handler, pull_handler,
+    push_handler, send_conflict_to_chat_handler, stash_pop_handler, stash_save_handler,
+};
+use git_widget_sidecar::{
+    cli::{parse_cli_args, CliMode},
+    config, routes, self_update, t3_installer, update_routes,
+};
 use github_routes::{
     create_github_repo_handler, oauth_logout_handler, oauth_poll_handler, oauth_start_handler,
 };
@@ -34,15 +41,14 @@ use integrate_routes::{
     abort_rebase_handler, continue_rebase_handler, integrate_handler, preview_integrate_handler,
     pull_both_handler, save_integration_mode_handler, scan_sync_handler,
 };
-use git_routes::{
-    abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, guarded_handler,
-    init_repo_handler, preview_merge_handler, preview_push_handler, publish_handler, pull_handler,
-    push_handler, send_conflict_to_chat_handler, stash_pop_handler, stash_save_handler,
-};
 use routes::{get_repos, init_config, post_config, status_handler, AppState};
-use workspace::resolve_workspace;
 use rust_embed::Embed;
-use std::{net::SocketAddr, sync::Arc};
+use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc};
+use tokio::net::TcpListener;
+use update_routes::{
+    check_update_handler, install_update_handler, update_status_handler, UpdateManager,
+};
+use workspace::resolve_workspace;
 
 #[derive(Embed)]
 #[folder = "../../ui/dist"]
@@ -74,17 +80,23 @@ async fn static_handler(uri: Uri) -> Response {
     (StatusCode::NOT_FOUND, "Not found").into_response()
 }
 
-#[tokio::main]
-async fn main() {
-    if installer::should_run_installer() {
-        installer::run_self_install();
-        return;
+/// Strictly binds on 127.0.0.1 (Prohibition P2: never 0.0.0.0).
+/// Falls back to an OS-assigned ephemeral loopback port if `preferred` is occupied.
+async fn bind_loopback(preferred: u16) -> TcpListener {
+    let primary = SocketAddr::from(([127, 0, 0, 1], preferred));
+    if let Ok(listener) = TcpListener::bind(primary).await {
+        return listener;
     }
+    let fallback = SocketAddr::from(([127, 0, 0, 1], 0));
+    TcpListener::bind(fallback)
+        .await
+        .expect("failed to bind loopback address 127.0.0.1")
+}
 
-    let port: u16 = std::env::var("ANTIGRAVITY_SIDECAR_WEB_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(39871);
+async fn run_server(port: u16, port_file: Option<PathBuf>, is_serve_mode: bool) {
+    self_update::cleanup_stale_update_dirs();
+    let listener = bind_loopback(port).await;
+    let addr = listener.local_addr().expect("failed reading local_addr");
 
     let state = Arc::new(AppState {
         ui_token: std::env::var("ANTIGRAVITY_SIDECAR_UI_TOKEN").ok(),
@@ -92,15 +104,18 @@ async fn main() {
         project_id: std::env::var("ANTIGRAVITY_PROJECT_ID").ok(),
         conversation_id: std::env::var("ANTIGRAVITY_CONVERSATION_ID").ok(),
         config: init_config(),
+        serve_port: if is_serve_mode { Some(addr.port()) } else { None },
+        port_file: port_file.clone(),
+        update: Arc::new(UpdateManager::new()),
     });
 
     let app = Router::new()
         .route("/api/repos", get(get_repos))
         .route("/api/config", post(post_config))
-        .route(
-            "/api/config/integration-mode",
-            post(save_integration_mode_handler),
-        )
+        .route("/api/config/integration-mode", post(save_integration_mode_handler))
+        .route("/api/update/check", get(check_update_handler))
+        .route("/api/update/status", get(update_status_handler))
+        .route("/api/update/install", post(install_update_handler))
         .route("/api/resolve-workspace", post(resolve_workspace))
         .route("/api/status", get(status_handler))
         .route("/api/git/guarded", post(guarded_handler))
@@ -134,10 +149,7 @@ async fn main() {
         .route("/api/git/abort-merge", post(abort_merge_handler))
         .route("/api/git/preview-merge", post(preview_merge_handler))
         .route("/api/git/preview-push", post(preview_push_handler))
-        .route(
-            "/api/git/send-conflict-to-chat",
-            post(send_conflict_to_chat_handler),
-        )
+        .route("/api/git/send-conflict-to-chat", post(send_conflict_to_chat_handler))
         .route("/api/commits", get(commits_list_handler))
         .route("/api/graph", get(graph_handler))
         .route("/api/commit-details", get(commit_details_handler))
@@ -157,10 +169,80 @@ async fn main() {
         .fallback(static_handler)
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("failed to bind loopback address");
+    if let Some(pf) = port_file {
+        if let Some(parent) = pf.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::write(&pf, addr.port().to_string());
+    }
     println!("[git-widget-sidecar] listening on http://{addr}");
     axum::serve(listener, app).await.expect("server error");
+}
+
+#[tokio::main]
+async fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let has_ag_env = std::env::var_os("ANTIGRAVITY_SIDECAR_WEB_PORT").is_some();
+
+    let mode = match parse_cli_args(&args, has_ag_env) {
+        Ok(m) => m,
+        Err(err) => {
+            eprintln!("[git-widget] {err}");
+            std::process::exit(2);
+        }
+    };
+
+    let is_serve_mode = args.iter().any(|a| a == "--serve")
+        || matches!(&mode, CliMode::Serve { port_file: Some(_), .. })
+        || !has_ag_env;
+
+    match mode {
+        CliMode::Serve { port, port_file } => run_server(port, port_file, is_serve_mode).await,
+        CliMode::Install {
+            target,
+            t3_dir,
+            explicit_flag,
+            auto_close_t3,
+        } => {
+            if let Err(err) = installer::run_install(
+                target,
+                t3_dir.as_deref(),
+                explicit_flag,
+                auto_close_t3,
+            ) {
+                eprintln!("[git-widget] {err}");
+                std::process::exit(1);
+            }
+        }
+        CliMode::UninstallT3 { t3_dir } => {
+            if let Err(err) = t3_installer::uninstall_t3_code(t3_dir.as_deref()) {
+                eprintln!("[git-widget] {err}");
+                std::process::exit(1);
+            }
+        }
+        CliMode::EnsureT3Patched { t3_dir } => {
+            if let Err(err) = t3_installer::ensure_t3_patched(t3_dir.as_deref()) {
+                eprintln!("[git-widget] {err}");
+            }
+        }
+        CliMode::SelfUpdate {
+            parent_pid,
+            serve_port,
+            port_file,
+            ag_dir,
+            t3_local_dir,
+        } => {
+            if let Err(err) = self_update::run_self_update(
+                None,
+                parent_pid,
+                serve_port,
+                port_file.as_deref(),
+                ag_dir.as_deref(),
+                t3_local_dir.as_deref(),
+            ) {
+                eprintln!("[git-widget] {err}");
+                std::process::exit(1);
+            }
+        }
+    }
 }

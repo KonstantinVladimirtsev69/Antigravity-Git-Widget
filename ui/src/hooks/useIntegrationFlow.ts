@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { CONVERSATION_ID, api } from '../api';
+import { deliverPromptToHost } from '../utils/hostBridge';
 import { getModeLabel } from '../IntegrateSplitButton';
 import type {
   ActionPreview,
@@ -245,8 +246,12 @@ export function useIntegrationFlow(params: FlowParams) {
     setError('');
     try {
       const res = await api.sendConflictToChat(selectedRepo, CONVERSATION_ID);
-      if (res.sent) setNotice('Conflict context sent to AI chat');
-      else { await navigator.clipboard.writeText(res.prompt); setNotice('Copied conflict prompt to clipboard'); }
+      const msg = await deliverPromptToHost(
+        res.prompt,
+        res.sent,
+        'Conflict context sent to AI chat',
+      );
+      setNotice(msg);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
 

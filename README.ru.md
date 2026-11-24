@@ -2,7 +2,7 @@
 
 # Antigravity Git Widget
 
-**Нативный Git-менеджер в стиле VS Code Source Control, граф коммитов и по-hunk'овое Diff-ревью с ИИ для Antigravity 2.0 (`AUX_PANE`)**
+**Нативный Git-менеджер в стиле VS Code Source Control, граф коммитов и по-hunk'овое Diff-ревью с ИИ для Antigravity 2.0 (`AUX_PANE`) и T3 Code (Desktop + Mobile Web)**
 
 [![Rust](https://img.shields.io/badge/Rust-1.85%2B-f74c00?logo=rust)](https://www.rust-lang.org/)
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](https://react.dev/)
@@ -14,7 +14,7 @@
 </div>
 
 > [!NOTE]
-> **Только для Windows 10/11:** Готовый бинарник (`git-widget-sidecar.exe`) и установщик рассчитаны на **Windows** (`Antigravity 2.0`). Версии для macOS и Linux на данный момент не собираются и не тестировались.
+> **Только для Windows 10/11:** Готовый бинарник (`git-widget-sidecar.exe`) и мульти-хост установщик рассчитаны на **Windows** (`Antigravity 2.0` и `T3 Code`). Версии для macOS и Linux на данный момент не собираются и не тестировались.
 
 ---
 
@@ -52,6 +52,8 @@
 | **SVG-граф и разработчики** | Цветной граф ветвлений/слияний, пилюли `HEAD` / `local` / `☁ remote` / `tag`, **чипы фильтрации по авторам**, статистика файлов коммита (`+ins / -del`), `Copy Hash`, `Cherry-Pick` и `GitHub ↗`. |
 | **Diff Review и связка с чатом ИИ** | Три режима: **Working** (незакоммиченные правки), **Branch** (вся ветка против базовой) и **Commits** (любой коммит из истории). Приём (`✓`) и откат (`✕`) отдельных hunk'ов + кнопка **`💬 AI`** для отправки фрагмента diff с комментарием в открытый чат. |
 | **Публикация на GitHub и PRs** | Создание нового **Public / Private** репозитория на GitHub прямо из виджета (`Create on GitHub`), привязка существующих remotes и быстрые кнопки **`+ Create PR ↗`** / **`PRs ↗`**. |
+| **Интеграция с T3 Code** | Поддержка **T3 Code** (Desktop и Mobile Web через Tailscale): аккуратный ASAR-хук `boot.cjs`, защищённый прокси `/git-widget/*`, выдвижная панель с drag-resizer и автовосстановление хука через Task Scheduler (`--ensure-t3-patched`). |
+| **Самообновление в 1 клик** | Проверка стабильных релизов на GitHub (`releases/latest`, TTL 6ч + кнопка `Check for updates`), бейдж `Update vX.Y.Z` с release notes, строгая проверка `SHA256SUMS.txt` и обновление всех хостов без закрытия T3 Code и изменения `app.asar`. |
 
 ---
 
@@ -74,9 +76,9 @@ git-widget/
 ### Вариант 1: Одним `.exe` файлом (без Rust и Node.js)
 
 1. Скачай **`git-widget-sidecar.exe`** из раздела [Releases](../../releases).
-2. **Запусти `git-widget-sidecar.exe` двойным кликом** (или `.\git-widget-sidecar.exe --install` в PowerShell).
-3. Бинарник сам установит себя в `%USERPROFILE%\.gemini\config\plugins\git-widget\` и пропишет `sidecar.json`.
-4. Перезапусти Antigravity 2.0 или открой вкладку **Git Widget** в правой шторке.
+2. **Запусти `git-widget-sidecar.exe` двойным кликом** (или `.\git-widget-sidecar.exe --install` в PowerShell) и выбери хост: **Antigravity 2.0**, **T3 Code** или **Оба** (либо флаг `--target antigravity|t3code|both`).
+3. Бинарник установит себя в `%USERPROFILE%\.gemini\config\plugins\git-widget\` и/или `%LOCALAPPDATA%\git-widget\`.
+4. Перезапусти Antigravity 2.0 / T3 Code или открой вкладку **Git Widget** в правой шторке. Последующие версии обновляются прямо из шапки виджета кнопкой **Update vX.Y.Z → Install & Restart**.
 
 ### Вариант 2: Из исходников (PowerShell)
 

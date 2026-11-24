@@ -3,6 +3,7 @@ import { CONVERSATION_ID, api } from './api';
 import { DiffAskAiBox } from './components/DiffAskAiBox';
 import { DiffModeBar } from './components/DiffModeBar';
 import type { CommitInfo, DiffFile, DiffHunk } from './types';
+import { deliverPromptToHost } from './utils/hostBridge';
 
 interface DiffReviewProps {
   repo: string;
@@ -80,12 +81,12 @@ export function DiffReview({
         question.trim(),
         CONVERSATION_ID,
       );
-      if (res.sent) {
-        onNotify('Diff snippet and question sent to AI chat');
-      } else {
-        await navigator.clipboard.writeText(res.prompt);
-        onNotify('Copied to clipboard (direct chat send unavailable)');
-      }
+      const msg = await deliverPromptToHost(
+        res.prompt,
+        res.sent,
+        'Diff snippet and question sent to AI chat',
+      );
+      onNotify(msg);
       setAskTarget(null);
       setQuestion('');
     } catch (e) {
