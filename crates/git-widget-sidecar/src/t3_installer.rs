@@ -17,7 +17,7 @@ use std::{
 };
 
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
+use std::os::windows::{fs::OpenOptionsExt, process::CommandExt};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -91,23 +91,38 @@ fn find_t3_executable(t3_dir: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-fn is_file_locked(path: &Path) -> bool {
+pub fn is_file_locked(path: &Path) -> bool {
     if !path.exists() {
         return false;
     }
-    OpenOptions::new().read(true).write(true).open(path).is_err()
-}
-
-fn close_t3_code_processes() {
+    let mut opts = OpenOptions::new();
+    opts.read(true).write(true);
     #[cfg(windows)]
     {
-        let ps = "Get-Process | Where-Object { $_.ProcessName -like 'T3 Code*' -or $_.ProcessName -eq 't3code' } | Stop-Process -Force -ErrorAction SilentlyContinue";
+        // Request exclusive access (share_mode = 0) so open read handles (like Electron app.asar)
+        // that block rename/DELETE are reliably detected before attempting atomic_replace.
+        opts.share_mode(0);
+    }
+    opts.open(path).is_err()
+}
+
+fn close_t3_code_processes(asar_path: &Path) {
+    #[cfg(windows)]
+    {
+        let ps = "Get-Process | Where-Object { $_.ProcessName -like 'T3 Code*' -or $_.ProcessName -eq 't3code' -or $_.ProcessName -eq 't3-resource-monitor' } | Stop-Process -Force -ErrorAction SilentlyContinue";
         let _ = Command::new("powershell")
             .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", ps])
             .creation_flags(CREATE_NO_WINDOW)
             .output();
-        thread::sleep(Duration::from_millis(700));
+        for _ in 0..20 {
+            if !is_file_locked(asar_path) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
     }
+    #[cfg(not(windows))]
+    let _ = asar_path;
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {
@@ -160,7 +175,7 @@ pub fn install_t3_code(
             false
         };
         if should_close {
-            close_t3_code_processes();
+            close_t3_code_processes(&asar_path);
         }
         if is_file_locked(&asar_path) {
             return Err(

@@ -129,7 +129,10 @@ fn atomic_replace(tmp_path: &Path, target: &Path) -> Result<(), String> {
     // Windows fallback when destination already exists
     let swap = target.with_extension(format!("asar.old.{}", std::process::id()));
     let _ = fs::remove_file(&swap);
-    fs::rename(target, &swap).map_err(|e| format!("Failed staging old ASAR: {e}"))?;
+    if let Err(e) = fs::rename(target, &swap) {
+        let _ = fs::remove_file(tmp_path);
+        return Err(format!("Failed staging old ASAR: {e}"));
+    }
     match fs::rename(tmp_path, target) {
         Ok(()) => {
             let _ = fs::remove_file(&swap);
@@ -137,6 +140,7 @@ fn atomic_replace(tmp_path: &Path, target: &Path) -> Result<(), String> {
         }
         Err(e) => {
             let _ = fs::rename(&swap, target);
+            let _ = fs::remove_file(tmp_path);
             Err(format!("Failed replacing ASAR atomically: {e}"))
         }
     }

@@ -2,6 +2,7 @@ use git_widget_sidecar::{
     cli::{parse_cli_args, CliMode, InstallTarget},
     t3_asar::{is_boot_patched, patch_app_asar, unpatch_app_asar, HOOK_MARKER, PatchOutcome},
     t3_fuses::{inspect_fuses_bytes, FUSE_SENTINEL},
+    t3_installer::is_file_locked,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -218,6 +219,25 @@ fn patches_recomputes_sha256_is_idempotent_and_restores_cleanly() {
     assert!(!is_boot_patched(&asar).unwrap());
     assert_eq!(fs::read(&asar).unwrap(), orig_bytes);
     assert!(!unpatch_app_asar(&asar).unwrap());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn detects_lock_when_another_handle_reads_file() {
+    let dir = tmp_dir("gw_lock_test");
+    let fpath = dir.join("app.asar");
+    fs::write(&fpath, b"asar-bytes").unwrap();
+    assert!(!is_file_locked(&fpath));
+
+    // Simulate Electron keeping app.asar open for reading (with shared read/write)
+    let reader = fs::File::open(&fpath).unwrap();
+    assert!(
+        is_file_locked(&fpath),
+        "is_file_locked must detect open read handles (like Electron app.asar)"
+    );
+    drop(reader);
+    assert!(!is_file_locked(&fpath));
 
     let _ = fs::remove_dir_all(&dir);
 }
