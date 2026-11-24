@@ -34,6 +34,37 @@ export interface ScannerConfig {
   github_token?: string | null;
   has_github_token?: boolean;
   integration_mode?: IntegrationMode;
+  update_repo?: string | null;
+}
+
+export type UpdateStage =
+  | 'idle'
+  | 'downloading'
+  | 'verifying'
+  | 'installing'
+  | 'restarting'
+  | 'error';
+
+export interface UpdateCheckResponse {
+  repo: string;
+  current_version: string;
+  latest_version: string | null;
+  update_available: boolean;
+  release_notes: string;
+  html_url: string | null;
+  published_at: string | null;
+  cached: boolean;
+  checked_at_epoch_s: number;
+  error: string | null;
+}
+
+export interface UpdateStatusResponse {
+  stage: UpdateStage;
+  current_version: string;
+  target_version: string | null;
+  message: string | null;
+  error: string | null;
+  in_progress: boolean;
 }
 
 export interface ReposResponse {
