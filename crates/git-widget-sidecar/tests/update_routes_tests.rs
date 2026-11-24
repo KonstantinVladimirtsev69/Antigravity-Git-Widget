@@ -183,11 +183,11 @@ fn make_state(
 #[tokio::test]
 async fn check_update_enforces_auth_caches_6h_and_force_bypasses() {
     let release_json = serde_json::json!({
-        "tag_name": "v0.2.0",
+        "tag_name": "v9.9.9",
         "draft": false,
         "prerelease": false,
-        "body": "Release notes v0.2.0",
-        "html_url": "https://github.com/o/r/releases/tag/v0.2.0",
+        "body": "Release notes v9.9.9",
+        "html_url": "https://github.com/o/r/releases/tag/v9.9.9",
         "published_at": "2026-11-25T00:00:00Z",
         "assets": []
     })
@@ -216,7 +216,7 @@ async fn check_update_enforces_auth_caches_6h_and_force_bypasses() {
     assert_eq!(st1, 200);
     let r1: UpdateCheckResponse = serde_json::from_str(&b1).unwrap();
     assert!(r1.update_available);
-    assert_eq!(r1.latest_version.as_deref(), Some("0.2.0"));
+    assert_eq!(r1.latest_version.as_deref(), Some("9.9.9"));
     assert!(!r1.cached);
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 
@@ -255,7 +255,7 @@ async fn check_update_handles_rate_limit_and_offline_without_caching_errors() {
             MockReply {
                 status: 200,
                 body: serde_json::json!({
-                    "tag_name": "v0.2.0",
+                    "tag_name": "v9.9.9",
                     "draft": false,
                     "prerelease": false,
                     "assets": []
@@ -506,7 +506,7 @@ async fn config_validates_resets_update_repo_and_invalidates_update_cache() {
     let (mock_base, hits, _) = spawn_mock_github(|_| MockReply {
         status: 200,
         body: serde_json::json!({
-            "tag_name": "v0.2.0",
+            "tag_name": "v9.9.9",
             "draft": false,
             "prerelease": false,
             "assets": []
