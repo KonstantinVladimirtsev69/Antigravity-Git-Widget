@@ -1,67 +1,38 @@
 // Client-side UI bridge for T3 Code (Desktop + Tailscale Mobile Web).
-// Integrates native Git button next to [data-right-panel-toggle], docks drawer into
-// [data-right-panel-surface-content] (below Windows titleBarOverlay), syncs active thread
-// workspace via React Fiber + network observers, and routes "💬 AI" to T3 Code composer.
+// Native Git button, right-panel menu item, resizable docked/push drawer,
+// React Fiber workspace sync, and "💬 AI" composer bridge.
 (function initGitWidgetT3Bridge() {
   if (window.__gwT3BridgeMounted) return;
   window.__gwT3BridgeMounted = true;
 
   const BASE_URL = window.__GW_T3_BASE_URL || '/git-widget';
   const IFRAME_ORIGIN = new URL(BASE_URL, window.location.origin).origin;
+  const WIDTH_KEY = 'gw.t3DrawerWidth';
+  const CSS = __GW_BRIDGE_CSS__;
+  const GIT_ICON_SVG =
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-6 3.5-12 5"/></svg>';
+
   const threadWorkspaces = new Map();
   let lastSentWorkspace = undefined;
   let drawerOpen = false;
+  let customResized = false;
+  let drawerWidth = (() => {
+    try {
+      const saved = Number(localStorage.getItem(WIDTH_KEY));
+      if (saved >= 300 && saved <= 900) return saved;
+    } catch (_) {}
+    return 420;
+  })();
   let iframeEl = null;
   let drawerEl = null;
   let fallbackBtn = null;
 
-  const GIT_ICON_SVG =
-    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-6 3.5-12 5"/></svg>';
-
-  const CSS = `
-    #gw-t3-native-btn {
-      display: inline-flex; align-items: center; justify-content: center; gap: 4px;
-      height: 28px; min-width: 28px; padding: 0 7px; border-radius: 6px; border: 1px solid transparent;
-      background: transparent; color: var(--muted-foreground, var(--foreground, #a1a1aa));
-      font-size: 12px; font-weight: 500; cursor: pointer; -webkit-app-region: no-drag;
-      transition: background 120ms, color 120ms;
-    }
-    #gw-t3-native-btn:hover { background: var(--accent, rgba(255,255,255,0.08)); color: var(--foreground, #f4f4f5); }
-    #gw-t3-native-btn.active { background: var(--accent, rgba(255,255,255,0.14)); color: var(--foreground, #fff); border-color: var(--border, rgba(255,255,255,0.16)); }
-    #gw-t3-fallback-btn {
-      position: fixed; bottom: 14px; right: 16px; z-index: 9998; height: 30px; padding: 0 11px;
-      display: inline-flex; align-items: center; gap: 5px; border-radius: 8px;
-      border: 1px solid var(--border, rgba(128,128,128,0.4));
-      background: var(--card, rgba(24,24,27,0.92)); color: var(--foreground, #f4f4f5);
-      font-size: 12px; font-weight: 600; cursor: pointer; -webkit-app-region: no-drag;
-    }
-    #gw-t3-drawer {
-      position: fixed; top: 40px; right: 0; width: min(420px, 92vw); height: calc(100vh - 40px);
-      z-index: 40; display: none; flex-direction: column; background: var(--background, #131316);
-      border-left: 1px solid var(--border, rgba(128,128,128,0.35));
-      border-top: 1px solid var(--border, rgba(128,128,128,0.2));
-      box-shadow: -6px 0 22px rgba(0,0,0,0.35); -webkit-app-region: no-drag;
-    }
-    html.gw-t3-pushed #root {
-      width: calc(100% - 420px) !important; transition: width 140ms ease-out;
-    }
-    #gw-t3-drawer.open { display: flex; }
-    #gw-t3-drawer-hdr {
-      display: flex; align-items: center; justify-content: space-between; padding: 6px 10px;
-      border-bottom: 1px solid var(--border, rgba(128,128,128,0.25));
-      font-size: 12px; font-weight: 600; color: var(--foreground, #f4f4f5);
-    }
-    #gw-t3-drawer-close {
-      background: transparent; border: none; color: inherit; font-size: 16px; cursor: pointer; padding: 2px 6px; border-radius: 4px;
-    }
-    #gw-t3-drawer-close:hover { background: var(--accent, rgba(255,255,255,0.1)); }
-    #gw-t3-drawer iframe { flex: 1; width: 100%; border: none; background: transparent; }
-    .gw-t3-toast {
-      position: fixed; bottom: 16px; right: 16px; z-index: 10002; padding: 8px 12px;
-      border-radius: 8px; background: var(--card, #18181b); color: var(--foreground, #f4f4f5);
-      border: 1px solid var(--border, #3f3f46); font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.35);
-    }
-  `;
+  function applyWidthVar(w) {
+    const clamped = Math.max(300, Math.min(Math.min(900, window.innerWidth - 320), Math.round(w)));
+    drawerWidth = clamped;
+    document.documentElement.style.setProperty('--gw-drawer-w', `${clamped}px`);
+    return clamped;
+  }
 
   function showToast(text) {
     const el = document.createElement('div');
@@ -147,11 +118,12 @@
       return;
     }
     const panel = document.querySelector('[data-right-panel-surface-content]');
-    if (panel) {
+    if (panel && !customResized) {
       const r = panel.getBoundingClientRect();
       if (r.width >= 260 && r.height >= 240) {
         document.documentElement.classList.remove('gw-t3-pushed');
         const top = Math.max(40, Math.round(r.top));
+        applyWidthVar(r.width);
         Object.assign(drawerEl.style, {
           top: `${top}px`, left: `${Math.round(r.left)}px`, right: 'auto',
           width: `${Math.round(r.width)}px`, height: `${Math.max(240, Math.round(window.innerHeight - top))}px`,
@@ -159,11 +131,39 @@
         return;
       }
     }
+    const w = applyWidthVar(drawerWidth);
     const canPush = window.innerWidth >= 960;
     document.documentElement.classList.toggle('gw-t3-pushed', canPush);
     Object.assign(drawerEl.style, {
       top: '40px', left: 'auto', right: '0',
-      width: canPush ? '420px' : 'min(420px, 92vw)', height: 'calc(100vh - 40px)',
+      width: canPush ? `${w}px` : `min(${w}px, 92vw)`, height: 'calc(100vh - 40px)',
+    });
+  }
+
+  function bindResizer(resizerEl) {
+    resizerEl.addEventListener('mousedown', (ev) => {
+      ev.preventDefault();
+      customResized = true;
+      resizerEl.classList.add('dragging');
+      document.documentElement.classList.add('gw-t3-resizing');
+      if (iframeEl) iframeEl.style.pointerEvents = 'none';
+
+      const onMove = (m) => {
+        const w = applyWidthVar(window.innerWidth - m.clientX);
+        const canPush = window.innerWidth >= 960;
+        document.documentElement.classList.toggle('gw-t3-pushed', canPush);
+        Object.assign(drawerEl.style, { left: 'auto', right: '0', width: `${w}px` });
+      };
+      const onUp = () => {
+        resizerEl.classList.remove('dragging');
+        document.documentElement.classList.remove('gw-t3-resizing');
+        if (iframeEl) iframeEl.style.pointerEvents = '';
+        try { localStorage.setItem(WIDTH_KEY, String(drawerWidth)); } catch (_) {}
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
     });
   }
 
@@ -183,9 +183,7 @@
         btn.innerHTML = `${GIT_ICON_SVG}<span>Git</span>`;
         btn.addEventListener('click', (e) => { e.stopPropagation(); setDrawerOpen(!drawerOpen); });
       }
-      if (btn.parentElement !== toggle.parentElement) {
-        toggle.parentElement.insertBefore(btn, toggle);
-      }
+      if (btn.parentElement !== toggle.parentElement) toggle.parentElement.insertBefore(btn, toggle);
       btn.classList.toggle('active', drawerOpen);
       if (fallbackBtn) fallbackBtn.style.display = 'none';
     } else if (fallbackBtn) {
@@ -193,15 +191,29 @@
     }
   }
 
+  function ensurePanelMenuItem() {
+    const surface = document.querySelector('[data-right-panel-surface-content]');
+    if (!surface || surface.querySelector('#gw-t3-panel-item')) return;
+    const buttons = Array.from(surface.querySelectorAll('button'));
+    const anchor = buttons.find((b) => /(Дифф|Diff|Пул-реквест|Pull request|Боковой чат|Side chat)/i.test(b.textContent || ''));
+    if (!anchor || !anchor.parentElement) return;
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.id = 'gw-t3-panel-item';
+    item.className = anchor.className;
+    item.innerHTML = `<span class="gw-t3-pi-left">${GIT_ICON_SVG}<span>Git Widget</span></span><span class="gw-t3-pi-kbd">Alt+G</span>`;
+    item.addEventListener('click', (e) => { e.stopPropagation(); setDrawerOpen(true); });
+    anchor.parentElement.appendChild(item);
+  }
+
   function findComposer() {
-    const selectors = [
+    for (const sel of [
       '[data-testid*="composer"] [contenteditable="true"]',
       '[contenteditable="true"][role="textbox"]',
       'textarea[placeholder*="Ask"], textarea[placeholder*="Message"], textarea[placeholder*="Спросите"]',
       'form textarea:not([disabled])',
       'textarea:not([disabled])',
-    ];
-    for (const sel of selectors) {
+    ]) {
       const el = document.querySelector(sel);
       if (el && el.offsetParent !== null) return el;
     }
@@ -216,8 +228,7 @@
       if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
         const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
         const nextVal = el.value ? `${el.value}\n\n${prompt}` : prompt;
-        if (desc && desc.set) desc.set.call(el, nextVal);
-        else el.value = nextVal;
+        if (desc && desc.set) desc.set.call(el, nextVal); else el.value = nextVal;
         el.dispatchEvent(new Event('input', { bubbles: true }));
         return true;
       }
@@ -248,6 +259,7 @@
 
   function setDrawerOpen(open) {
     drawerOpen = open;
+    if (!open) customResized = false;
     if (!drawerEl) return;
     drawerEl.classList.toggle('open', open);
     positionDrawer();
@@ -271,6 +283,9 @@
     fallbackBtn.addEventListener('click', () => setDrawerOpen(!drawerOpen));
 
     drawerEl = document.createElement('aside'); drawerEl.id = 'gw-t3-drawer';
+    const resizer = document.createElement('div'); resizer.id = 'gw-t3-resizer'; resizer.title = 'Изменить ширину';
+    bindResizer(resizer);
+
     const hdr = document.createElement('div'); hdr.id = 'gw-t3-drawer-hdr';
     const title = document.createElement('span'); title.textContent = 'Git Widget';
     const closeBtn = document.createElement('button');
@@ -281,9 +296,11 @@
 
     iframeEl = document.createElement('iframe'); iframeEl.title = 'Git Widget';
     iframeEl.addEventListener('load', () => { postTheme(); syncWorkspace(true); });
-    drawerEl.append(hdr, iframeEl); document.body.append(fallbackBtn, drawerEl);
+    drawerEl.append(resizer, hdr, iframeEl); document.body.append(fallbackBtn, drawerEl);
 
+    applyWidthVar(drawerWidth);
     ensureNativeButton();
+    ensurePanelMenuItem();
     window.addEventListener('resize', positionDrawer);
     window.addEventListener('keydown', (e) => {
       if (e.altKey && (e.key === 'g' || e.key === 'G')) { e.preventDefault(); setDrawerOpen(!drawerOpen); }
@@ -294,6 +311,7 @@
     });
     setInterval(() => {
       ensureNativeButton();
+      ensurePanelMenuItem();
       if (drawerOpen) { positionDrawer(); syncWorkspace(false); }
     }, 800);
   }
