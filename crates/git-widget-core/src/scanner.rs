@@ -36,6 +36,8 @@ pub struct ScannerConfig {
     pub github_oauth_client_id: Option<String>,
     #[serde(default)]
     pub integration_mode: IntegrationMode,
+    #[serde(default)]
+    pub update_repo: Option<String>,
 }
 
 impl Default for ScannerConfig {
@@ -46,6 +48,7 @@ impl Default for ScannerConfig {
             github_token: None,
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::default(),
+            update_repo: None,
         }
     }
 }

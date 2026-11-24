@@ -17,6 +17,7 @@ pub mod stash;
 pub mod status;
 pub mod status_parser;
 pub mod sync;
+pub mod updater;
 pub mod validation;
 
 pub use error::{CoreError, Result};
