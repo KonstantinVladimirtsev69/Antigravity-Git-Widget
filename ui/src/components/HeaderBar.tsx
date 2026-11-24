@@ -1,5 +1,6 @@
 import { Picker } from '../Picker';
 import type { PickerOption } from '../Picker';
+import { normalizeVersion } from '../hooks/useAppUpdater';
 import type { RepoStatus } from '../types';
 
 interface HeaderBarProps {
@@ -11,6 +12,9 @@ interface HeaderBarProps {
   tab: 'flow' | 'diff';
   diffCount: number;
   busy: boolean;
+  updateVersion?: string | null;
+  updateInProgress?: boolean;
+  onOpenUpdateModal?: () => void;
   onSelectRepo: (val: string) => void;
   onRefresh: () => void;
   onToggleSettings: () => void;
@@ -28,6 +32,9 @@ export function HeaderBar({
   tab,
   diffCount,
   busy,
+  updateVersion,
+  updateInProgress = false,
+  onOpenUpdateModal,
   onSelectRepo,
   onRefresh,
   onToggleSettings,
@@ -35,6 +42,8 @@ export function HeaderBar({
   onToggleRemoteForm,
   onSwitchTab,
 }: HeaderBarProps) {
+  const badgeVersion = normalizeVersion(updateVersion);
+
   return (
     <>
       <div className="gw-row">
@@ -45,6 +54,17 @@ export function HeaderBar({
           placeholder="Select repository..."
           onChange={onSelectRepo}
         />
+        {(badgeVersion || updateInProgress) && onOpenUpdateModal && (
+          <button
+            type="button"
+            className="gw-badge gw-badge-ok"
+            style={{ cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+            onClick={onOpenUpdateModal}
+            title={badgeVersion ? `Update to v${badgeVersion}` : 'Updating widget'}
+          >
+            {updateInProgress ? 'Updating...' : `Update v${badgeVersion}`}
+          </button>
+        )}
         <button className="gw-btn" onClick={onRefresh} disabled={busy}>
           ↻
         </button>

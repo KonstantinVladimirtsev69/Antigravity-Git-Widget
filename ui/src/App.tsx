@@ -6,11 +6,13 @@ import { ConflictBanner } from './components/ConflictBanner';
 import { FlowModals } from './components/FlowModals';
 import { HeaderBar } from './components/HeaderBar';
 import { NoticeFooter } from './components/NoticeFooter';
+import { UpdateModal } from './components/UpdateModal';
 import { DiffReview } from './DiffReview';
 import { GraphPanel } from './GraphPanel';
 import { RemoteModal, SettingsPanel } from './Modals';
 import { PrPanel } from './PrPanel';
 import { StashPanel } from './StashPanel';
+import { useAppUpdater } from './hooks/useAppUpdater';
 import { useIntegrationFlow } from './hooks/useIntegrationFlow';
 import { MODE_STORAGE_KEY, VALID_MODES, useRepoData } from './hooks/useRepoData';
 import { IS_T3_HOST, deliverPromptToHost } from './utils/hostBridge';
@@ -33,19 +35,12 @@ export default function App() {
     setError('');
   }, []);
 
-  const data = useRepoData(busy, showSettings || showRemoteForm, setError, clearMessages);
+  const updater = useAppUpdater();
+  const data = useRepoData(busy, showSettings || showRemoteForm || updater.modalOpen, setError, clearMessages);
   const flow = useIntegrationFlow({
-    selectedRepo: data.selectedRepo,
-    status: data.status,
-    selectedRemote: data.selectedRemote,
-    mergeTarget: data.mergeTarget,
-    busy,
-    setBusy,
-    setNotice,
-    setError,
-    activeRepoRef: data.activeRepoRef,
-    lastFetchAtRef: data.lastFetchAtRef,
-    refreshRepoData: data.refreshRepoData,
+    selectedRepo: data.selectedRepo, status: data.status, selectedRemote: data.selectedRemote,
+    mergeTarget: data.mergeTarget, busy, setBusy, setNotice, setError,
+    activeRepoRef: data.activeRepoRef, lastFetchAtRef: data.lastFetchAtRef, refreshRepoData: data.refreshRepoData,
   });
 
   useEffect(() => {
@@ -67,9 +62,7 @@ export default function App() {
             return;
           }
         }
-        if (!IS_T3_HOST) {
-          data.setSelectedRepo((prev) => prev || res.repos[0]?.path || '');
-        }
+        if (!IS_T3_HOST) data.setSelectedRepo((prev) => prev || res.repos[0]?.path || '');
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -113,6 +106,9 @@ export default function App() {
         tab={data.tab}
         diffCount={diffCount}
         busy={busy}
+        updateVersion={updater.availableVersion}
+        updateInProgress={updater.isInstalling}
+        onOpenUpdateModal={updater.openModal}
         onSelectRepo={(val) => { data.setAutoMatched(false); data.setSelectedRepo(val); }}
         onRefresh={() => void data.refreshRepoData(selectedRepo)}
         onToggleSettings={() => setShowSettings((v) => !v)}
@@ -121,10 +117,28 @@ export default function App() {
         onSwitchTab={(t) => { data.setTab(t); if (t === 'diff') void data.refreshRepoData(selectedRepo); }}
       />
 
+      {updater.modalOpen && updater.checkInfo && (
+        <UpdateModal
+          info={updater.checkInfo}
+          status={updater.status}
+          installing={updater.isInstalling}
+          restartTimedOut={updater.restartTimedOut}
+          reloadSuggested={updater.reloadSuggested}
+          onInstall={() => void updater.startInstall()}
+          onClose={updater.closeModal}
+        />
+      )}
+
       {showSettings && (
         <SettingsPanel
           config={data.config}
           busy={busy}
+          currentVersion={updater.currentVersion}
+          updateInfo={updater.checkInfo}
+          checkingUpdates={updater.checking}
+          updateCheckError={updater.manualError}
+          onCheckUpdates={() => void updater.checkForUpdates()}
+          onOpenUpdateModal={() => { setShowSettings(false); updater.openModal(); }}
           onClose={() => setShowSettings(false)}
           onInitRepo={async (path) => {
             if (!(await flow.runSimple(() => api.initRepo(path)))) return false;
@@ -155,9 +169,7 @@ export default function App() {
           hasSavedToken={Boolean(data.config.has_github_token)}
           busy={busy}
           onClose={() => setShowRemoteForm(false)}
-          onAuthChanged={async () => {
-            data.setConfig((await api.getRepos()).config);
-          }}
+          onAuthChanged={async () => { data.setConfig((await api.getRepos()).config); }}
           onError={setError}
           onAddExisting={async (name, url) => {
             if (await flow.runSimple(() => api.addRemote(selectedRepo, name, url))) setShowRemoteForm(false);
@@ -179,77 +191,53 @@ export default function App() {
 
       {data.tab === 'diff' && selectedRepo && (
         <DiffReview
-          repo={selectedRepo}
-          files={data.diffFiles}
-          commits={data.commits}
-          selectedCommit={data.selectedCommit}
-          mode={data.diffMode}
-          focusFile={data.focusFile}
-          busy={busy}
+          repo={selectedRepo} files={data.diffFiles} commits={data.commits}
+          selectedCommit={data.selectedCommit} mode={data.diffMode} focusFile={data.focusFile} busy={busy}
           onModeChange={(m) => { data.setDiffMode(m); void data.refreshRepoData(selectedRepo, { mode: m }); }}
           onCommitSelect={(h) => { data.setSelectedCommit(h); void data.refreshRepoData(selectedRepo, { mode: 'commit', commitHash: h }); }}
-          onRefresh={() => data.refreshRepoData(selectedRepo)}
-          onNotify={setNotice}
-          onError={setError}
+          onRefresh={() => data.refreshRepoData(selectedRepo)} onNotify={setNotice} onError={setError}
         />
       )}
 
       {data.tab === 'flow' && status && (
         <>
           <BranchPanel
-            status={status}
-            selectedRemote={data.selectedRemote}
-            mergeTarget={data.mergeTarget}
-            mergeDir={flow.mergeDir}
-            integrationMode={flow.integrationMode}
-            dualSync={flow.dualSync}
-            scanningSync={flow.scanningSync}
-            busy={busy}
+            status={status} selectedRemote={data.selectedRemote} mergeTarget={data.mergeTarget}
+            mergeDir={flow.mergeDir} integrationMode={flow.integrationMode} dualSync={flow.dualSync}
+            scanningSync={flow.scanningSync} busy={busy}
             onCheckoutLocal={(b) => void flow.executeGuarded('checkout', b, { mode: 'fail_if_dirty' })}
             onCheckoutRemote={(rb) => void flow.runSimple(() => api.checkoutRemote(selectedRepo, rb))}
             onCreateBranch={async (n) => { await flow.runSimple(() => api.createBranch(selectedRepo, n)); }}
             onDeleteBranch={async (n, f) => { await flow.runSimple(() => api.deleteBranch(selectedRepo, n, f)); }}
-            onFetch={() => {
-              data.lastFetchAtRef.current = Date.now();
-              void flow.runSimple(() => api.fetchAll(selectedRepo, data.selectedRemote || undefined));
-            }}
+            onFetch={() => { data.lastFetchAtRef.current = Date.now(); void flow.runSimple(() => api.fetchAll(selectedRepo, data.selectedRemote || undefined)); }}
             onPull={() => void flow.executeGuarded('pull', data.selectedRemote || null, { mode: 'fail_if_dirty' })}
             onPullBoth={() => void flow.handlePullBoth()}
             onPush={() => void flow.handlePushClick(() => setShowRemoteForm(true))}
             onMergeDirToggle={() => flow.setMergeDir((d) => (d === 'current_into_target' ? 'into_current' : 'current_into_target'))}
-            onMergeTargetChange={data.setMergeTarget}
-            onIntegrationModeChange={flow.handleIntegrationModeChange}
+            onMergeTargetChange={data.setMergeTarget} onIntegrationModeChange={flow.handleIntegrationModeChange}
             onIntegrate={() => void flow.handleIntegrateClick()}
           />
 
           <FlowModals
-            integrationMode={flow.integrationMode}
-            busy={busy}
-            unpulledPrompt={flow.unpulledPrompt}
-            dirtyPrompt={flow.dirtyPrompt}
-            protectedPrompt={flow.protectedPrompt}
+            integrationMode={flow.integrationMode} busy={busy} unpulledPrompt={flow.unpulledPrompt}
+            dirtyPrompt={flow.dirtyPrompt} protectedPrompt={flow.protectedPrompt}
             onPullAndIntegrate={() => void flow.confirmPullAndIntegrate()}
             onSkipPullAndIntegrate={() => void flow.skipPullAndIntegrate()}
             onCancelUnpulled={() => flow.setUnpulledPrompt(null)}
-            onResolveDirty={flow.resolveDirtyPrompt}
-            onCancelDirty={() => flow.setDirtyPrompt(null)}
+            onResolveDirty={flow.resolveDirtyPrompt} onCancelDirty={() => flow.setDirtyPrompt(null)}
             onConfirmProtected={() => void flow.confirmProtectedPrompt()}
             onCancelProtected={() => flow.setProtectedPrompt(null)}
           />
 
           <ConflictBanner
-            status={status}
-            busy={busy}
-            onSendConflict={() => void flow.sendConflict()}
+            status={status} busy={busy} onSendConflict={() => void flow.sendConflict()}
             onContinueRebase={() => void flow.runSimple(() => api.continueRebase(selectedRepo))}
             onAbortRebase={() => void flow.runSimple(() => api.abortRebase(selectedRepo))}
             onAbortMerge={() => void flow.runSimple(() => api.abortMerge(selectedRepo))}
           />
 
           <ChangesPanel
-            staged={status.staged_changes}
-            unstaged={status.unstaged_changes}
-            busy={busy}
+            staged={status.staged_changes} unstaged={status.unstaged_changes} busy={busy}
             onCommit={async (msg, amend) => { await flow.runSimple(() => api.commitAll(selectedRepo, msg, amend)); }}
             onSuggestCommit={handleSuggestCommit}
             onUndoCommit={async () => { await flow.runSimple(() => api.undoCommit(selectedRepo)); }}
@@ -263,13 +251,8 @@ export default function App() {
           />
 
           <GraphPanel
-            repo={selectedRepo}
-            commits={data.graphData?.commits ?? []}
-            authors={data.graphData?.authors ?? []}
-            githubUrl={data.graphData?.github_url ?? null}
-            allBranches={data.graphAll}
-            authorFilter={data.graphAuthor}
-            busy={busy}
+            repo={selectedRepo} commits={data.graphData?.commits ?? []} authors={data.graphData?.authors ?? []}
+            githubUrl={data.graphData?.github_url ?? null} allBranches={data.graphAll} authorFilter={data.graphAuthor} busy={busy}
             onToggleAll={(all) => { data.setGraphAll(all); void data.refreshRepoData(selectedRepo, { allBranches: all }); }}
             onAuthorFilter={(author) => { data.setGraphAuthor(author); void data.refreshRepoData(selectedRepo, { author }); }}
             onCherryPick={(hash) => void flow.runSimple(() => api.cherryPick(selectedRepo, hash))}
@@ -283,9 +266,7 @@ export default function App() {
           <PrPanel prData={data.prData} currentBranch={status.branch} baseBranch={data.mergeTarget || 'main'} />
 
           <StashPanel
-            stashes={data.stashes}
-            isDirty={status.is_dirty}
-            busy={busy}
+            stashes={data.stashes} isDirty={status.is_dirty} busy={busy}
             onSave={(m) => void flow.runSimple(() => api.stashSave(selectedRepo, m))}
             onApply={(idx) => void flow.runSimple(() => api.stashApply(selectedRepo, idx))}
             onPop={(idx) => void flow.runSimple(() => api.stashPopAt(selectedRepo, idx))}
