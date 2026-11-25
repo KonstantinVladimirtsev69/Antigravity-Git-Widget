@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { normalizeVersion } from '../hooks/useAppUpdater';
 import type { UpdateCheckResponse, UpdateStage, UpdateStatusResponse } from '../types';
+import { ReleaseNotesView } from './ReleaseNotesView';
 
 const STEPS: { key: UpdateStage; label: string }[] = [
   { key: 'downloading', label: 'Downloading' },
@@ -88,16 +89,15 @@ export function UpdateModal({
         style={{
           maxHeight: 240,
           overflowY: 'auto',
-          whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
-          padding: '6px 8px',
+          padding: '8px 10px',
           borderRadius: 6,
           background: 'rgba(0, 0, 0, 0.25)',
           border: '1px solid var(--gw-border)',
           fontSize: 11.5,
         }}
       >
-        {info.release_notes.trim() || 'No release notes provided.'}
+        <ReleaseNotesView markdown={info.release_notes} />
       </div>
 
       {status && stage !== 'idle' && (

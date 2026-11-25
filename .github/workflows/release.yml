@@ -48,10 +48,43 @@ jobs:
           $hash = (Get-FileHash dist-release/git-widget-sidecar.exe -Algorithm SHA256).Hash.ToLower()
           "$hash  git-widget-sidecar.exe" | Set-Content -Encoding utf8 dist-release/SHA256SUMS.txt
 
+      - name: Extract release notes from CHANGELOG.md
+        id: changelog
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $ver = $tag -replace '^v', ''
+          $escaped = [regex]::Escape($ver)
+          $lines = Get-Content -Path CHANGELOG.md -Encoding UTF8
+          $capture = $false
+          $body = New-Object System.Collections.Generic.List[string]
+          foreach ($line in $lines) {
+            if ($line -match "^##\s+\[(?:v)?$escaped\]" -or $line -match "^##\s+(?:v)?$escaped\b") {
+              $capture = $true
+              continue
+            }
+            if ($capture -and $line -match "^##\s+") {
+              break
+            }
+            if ($capture) {
+              $body.Add($line)
+            }
+          }
+          $text = ($body -join "`n").Trim()
+          if ($text.Length -gt 0) {
+            $text | Set-Content -Encoding utf8 dist-release/RELEASE_NOTES.md
+            "has_notes=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "body_path=dist-release/RELEASE_NOTES.md" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "has_notes=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "body_path=" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: ${{ steps.changelog.outputs.body_path }}
+          generate_release_notes: ${{ steps.changelog.outputs.has_notes != 'true' }}
           files: |
             dist-release/git-widget-sidecar.exe
             dist-release/SHA256SUMS.txt

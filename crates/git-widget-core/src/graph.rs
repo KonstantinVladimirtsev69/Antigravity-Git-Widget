@@ -119,7 +119,9 @@ pub async fn get_commit_graph(
         "--format=%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%cr%x1f%cd%x1f%D",
     ];
     if all_branches {
-        args.push("--all");
+        // Include branches, remotes, tags, and HEAD — avoid `--all` which pulls in
+        // tool-internal namespaces such as `refs/t3/orchestration-v2/checkpoints/*`.
+        args.extend(["--branches", "--remotes", "--tags", "HEAD"]);
     }
 
     let (log_res, github_url) = tokio::join!(
