@@ -5,6 +5,12 @@ All notable changes to **Antigravity Git Widget** will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-25
+
+### Fixed
+- **Commit Graph (`get_commit_graph`)**: Replaced `git log --all` with `--branches --remotes --tags HEAD` when `All` mode is active so tool-internal ref namespaces such as T3 Code's `refs/t3/orchestration-v2/checkpoints/*` no longer appear as commits or `T3` author chips in the graph.
+- **Update Modal & Release Notes**: Added structured Markdown formatting (`ReleaseNotesView`) for release notes in `UpdateModal`, and updated `.github/workflows/release.yml` to publish the matching version section from `CHANGELOG.md` as GitHub Release notes.
+
 ## [0.3.0] - 2026-11-25
 
 ### Added

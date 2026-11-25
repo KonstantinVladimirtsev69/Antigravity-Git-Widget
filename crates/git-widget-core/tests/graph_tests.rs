@@ -111,3 +111,50 @@ fn parses_github_owner_repo_and_rest_prs_json() {
     assert_eq!(prs[0].head_ref, "feat/oauth");
     assert_eq!(prs[0].base_ref, "main");
 }
+
+#[tokio::test]
+async fn graph_excludes_internal_t3_checkpoint_refs() {
+    let tmp = TempDir::new().unwrap();
+    let repo = tmp.path().join("t3-refs-repo");
+    fs::create_dir_all(&repo).unwrap();
+    git_sync(&repo, &["init", "-b", "main"]);
+    git_sync(&repo, &["config", "user.email", "alice@example.com"]);
+    git_sync(&repo, &["config", "user.name", "Alice"]);
+    fs::write(repo.join("a.txt"), "hello\n").unwrap();
+    git_sync(&repo, &["add", "."]);
+    git_sync(&repo, &["commit", "-m", "alice init"]);
+
+    git_sync(&repo, &["checkout", "-b", "feat/work"]);
+    fs::write(repo.join("b.txt"), "work\n").unwrap();
+    git_sync(&repo, &["add", "."]);
+    git_sync(&repo, &["commit", "-m", "alice feat"]);
+    git_sync(&repo, &["tag", "v0.1.0"]);
+
+    // Create an internal T3 checkpoint commit under refs/t3/... (detached from branches/tags)
+    git_sync(&repo, &["checkout", "--detach", "main"]);
+    git_sync(&repo, &["config", "user.email", "t3@example.com"]);
+    git_sync(&repo, &["config", "user.name", "T3"]);
+    fs::write(repo.join("checkpoint.txt"), "snap\n").unwrap();
+    git_sync(&repo, &["add", "."]);
+    git_sync(&repo, &["commit", "-m", "t3 checkpoint ref=refs/t3/orchestration-v2/checkpoints/abc"]);
+
+    let cp_hash_out = Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(cp_hash_out.status.success());
+    let cp_hash = String::from_utf8_lossy(&cp_hash_out.stdout).trim().to_string();
+
+    git_sync(
+        &repo,
+        &["update-ref", "refs/t3/orchestration-v2/checkpoints/abc", &cp_hash],
+    );
+    git_sync(&repo, &["checkout", "main"]);
+
+    let graph = get_commit_graph(&repo, true, None, 50).await.unwrap();
+    assert_eq!(graph.commits.len(), 2, "expected only main and feat/work commits");
+    assert!(graph.commits.iter().all(|c| c.author_name != "T3"));
+    assert!(graph.authors.iter().all(|a| a.name != "T3"));
+}
