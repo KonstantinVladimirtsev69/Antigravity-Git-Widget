@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CONVERSATION_ID, api } from './api';
 import { BranchPanel } from './BranchPanel';
 import { ChangesPanel } from './ChangesPanel';
@@ -23,6 +23,14 @@ declare global {
   }
 }
 
+function parentDirOf(targetPath: string): string | null {
+  const cleaned = targetPath.trim().replace(/[\\/]+$/, '');
+  const idx = Math.max(cleaned.lastIndexOf('\\'), cleaned.lastIndexOf('/'));
+  if (idx <= 0) return null;
+  const dir = cleaned.slice(0, idx);
+  return /^[A-Za-z]:$/.test(dir) ? `${dir}\\` : dir;
+}
+
 export default function App() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -36,13 +44,23 @@ export default function App() {
   }, []);
 
   const updater = useAppUpdater();
-  const clone = useClone();
+  const onCloneSuccessRef = useRef<(targetPath: string) => void>(() => {});
+  const clone = useClone((targetPath) => onCloneSuccessRef.current(targetPath));
   const data = useRepoData(
     busy,
     showSettings || showRemoteForm || updater.modalOpen || clone.modalOpen,
     setError,
     clearMessages,
   );
+  onCloneSuccessRef.current = (targetPath: string) => {
+    data.addAdHocRepo(targetPath);
+    data.setAutoMatched(false);
+    data.setSelectedRepo(targetPath);
+    const parent = parentDirOf(targetPath);
+    if (parent) {
+      data.setConfig((prev) => ({ ...prev, last_clone_dir: parent }));
+    }
+  };
   const flow = useIntegrationFlow({
     selectedRepo: data.selectedRepo, status: data.status, selectedRemote: data.selectedRemote,
     mergeTarget: data.mergeTarget, busy, setBusy, setNotice, setError,
