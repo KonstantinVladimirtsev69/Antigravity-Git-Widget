@@ -1,14 +1,21 @@
 //! HTTP routes and single-flight coordinator for `/api/clone*`.
 
-use crate::routes::AppState;
+use crate::routes::{check_auth, map_err, AppState};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
 };
-use git_widget_core::{clone::CloneTimeouts, clone_progress::CloneStage};
+use git_widget_core::{
+    clone::{run_clone, CloneOptions, CloneTimeouts},
+    clone_progress::{CloneProgressSnapshot, CloneStage},
+    clone_validation::{parse_clone_url, prepare_clone_target},
+};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::{watch, Mutex, RwLock};
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +49,21 @@ impl Default for CloneStatusResponse {
             in_progress: false,
             error: None,
             log_tail: Vec::new(),
+        }
+    }
+}
+
+impl From<CloneProgressSnapshot> for CloneStatusResponse {
+    fn from(s: CloneProgressSnapshot) -> Self {
+        Self {
+            stage: s.stage,
+            percent: s.percent,
+            phase_label: s.phase_label,
+            target_path: Some(s.target_path),
+            sanitized_url: Some(s.sanitized_url),
+            in_progress: s.in_progress,
+            error: s.error,
+            log_tail: s.log_tail,
         }
     }
 }
@@ -82,36 +104,97 @@ impl CloneManager {
 }
 
 pub async fn start_clone_handler(
-    State(_st): State<Arc<AppState>>,
-    _headers: HeaderMap,
-    Json(_body): Json<StartCloneRequest>,
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<StartCloneRequest>,
 ) -> Response {
-    let _ = (&_st.clone.cancel_tx, &_st.clone.timeouts);
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({ "error": "not implemented" })),
-    )
-        .into_response()
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+
+    let source = match parse_clone_url(&body.url) {
+        Ok(s) => s,
+        Err(e) => return map_err(e),
+    };
+    let parent_dir = body.parent_dir.trim().to_string();
+    let folder_name = body.folder_name;
+    let guard = match prepare_clone_target(Path::new(&parent_dir), &folder_name) {
+        Ok(g) => g,
+        Err(e) => return map_err(e),
+    };
+
+    let (tx, rx) = watch::channel(false);
+    *st.clone.cancel_tx.lock().await = Some(tx);
+
+    let initial = CloneStatusResponse {
+        stage: CloneStage::Starting,
+        percent: 1,
+        phase_label: "Starting clone...".to_string(),
+        target_path: Some(guard.target_path.to_string_lossy().to_string()),
+        sanitized_url: Some(source.sanitized_url.clone()),
+        in_progress: true,
+        error: None,
+        log_tail: Vec::new(),
+    };
+    *st.clone.status.write().await = initial.clone();
+
+    let bg = Arc::clone(&st);
+    let opts = CloneOptions {
+        url: source.normalized_url,
+        parent_dir: PathBuf::from(&parent_dir),
+        folder_name: Some(folder_name),
+        timeouts: st.clone.timeouts,
+    };
+    let target_str = guard.target_path.to_string_lossy().to_string();
+    let sanitized = source.sanitized_url;
+    tokio::spawn(async move {
+        let mgr_status = Arc::clone(&bg);
+        let result = run_clone(opts, rx, move |snap| {
+            if let Ok(mut guard) = mgr_status.clone.status.try_write() {
+                *guard = CloneStatusResponse::from(snap);
+            }
+        })
+        .await;
+
+        *bg.clone.cancel_tx.lock().await = None;
+        let mut status_guard = bg.clone.status.write().await;
+        match result {
+            Ok(outcome) => {
+                status_guard.stage = CloneStage::Done;
+                status_guard.percent = 100;
+                status_guard.phase_label = "Clone complete".to_string();
+                status_guard.target_path = Some(outcome.target_path.to_string_lossy().to_string());
+                status_guard.sanitized_url = Some(outcome.sanitized_url);
+                status_guard.in_progress = false;
+                status_guard.error = None;
+                status_guard.log_tail = outcome.log_tail;
+            }
+            Err(err) => {
+                if status_guard.in_progress {
+                    status_guard.stage = CloneStage::Error;
+                    status_guard.phase_label = "Clone failed".to_string();
+                    status_guard.target_path = Some(target_str);
+                    status_guard.sanitized_url = Some(sanitized);
+                    status_guard.in_progress = false;
+                    status_guard.error = Some(err.to_string());
+                }
+            }
+        }
+    });
+
+    (StatusCode::ACCEPTED, Json(initial)).into_response()
 }
 
-pub async fn clone_status_handler(
-    State(_st): State<Arc<AppState>>,
-    _headers: HeaderMap,
-) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({ "error": "not implemented" })),
-    )
-        .into_response()
+pub async fn clone_status_handler(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    Json(st.clone.status.read().await.clone()).into_response()
 }
 
-pub async fn cancel_clone_handler(
-    State(_st): State<Arc<AppState>>,
-    _headers: HeaderMap,
-) -> Response {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({ "error": "not implemented" })),
-    )
-        .into_response()
+pub async fn cancel_clone_handler(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = check_auth(&st, &headers) {
+        return r;
+    }
+    Json(st.clone.status.read().await.clone()).into_response()
 }
