@@ -11,7 +11,7 @@ use crate::{
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::{Command as StdCommand, Stdio},
+    process::Stdio,
     time::Duration,
 };
 use tokio::{
@@ -20,9 +20,6 @@ use tokio::{
     sync::watch,
     time::{sleep, sleep_until, Instant},
 };
-
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
 const LOG_RING_CAPACITY: usize = 40;
 const CLEANUP_MAX_ATTEMPTS: usize = 20;
@@ -76,13 +73,13 @@ pub fn build_clone_command(url: &str, target: &Path) -> Command {
 pub async fn kill_process_tree(pid: Option<u32>, child: &mut Child) {
     #[cfg(windows)]
     if let Some(p) = pid {
-        let mut tk = StdCommand::new("taskkill");
+        let mut tk = Command::new("taskkill");
         tk.args(["/F", "/T", "/PID", &p.to_string()])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .creation_flags(0x0800_0000);
-        let _ = tk.status();
+        let _ = tk.status().await;
     }
     let _ = child.kill().await;
     let _ = child.wait().await;
@@ -181,7 +178,10 @@ where
                 _ = sleep_until(idle_deadline) => { timeout_kind = Some("idle"); break; }
                 _ = sleep_until(total_deadline) => { timeout_kind = Some("total"); break; }
                 read_res = pipe.read(&mut buf) => {
-                    let n = read_res?;
+                    let n = match read_res {
+                        Ok(n) => n,
+                        Err(err) => return abort_io_failure(pid, &mut child, guard.existed_before, err, &mut tracker).await,
+                    };
                     if n == 0 { break; }
                     last_output_at = Instant::now();
                     for &b in &buf[..n] {
@@ -218,7 +218,10 @@ where
                 Err(_) => { cancel_open = false; }
             },
             _ = sleep_until(total_deadline) => { timeout_kind = Some("total"); break None; }
-            wait_res = child.wait() => break Some(wait_res?),
+            wait_res = child.wait() => match wait_res {
+                Ok(s) => break Some(s),
+                Err(err) => return abort_io_failure(pid, &mut child, guard.existed_before, err, &mut tracker).await,
+            },
         }
     };
 
@@ -265,4 +268,18 @@ async fn abort_clone<F: FnMut(CloneProgressSnapshot) + Send>(
         let secs = match timeout_kind { Some("idle") => timeouts.idle.as_secs().max(1), _ => timeouts.total.as_secs().max(1) };
         Err(CoreError::Timeout(secs, msg))
     }
+}
+
+async fn abort_io_failure<F: FnMut(CloneProgressSnapshot) + Send>(
+    pid: Option<u32>,
+    child: &mut Child,
+    existed_before: bool,
+    err: std::io::Error,
+    tracker: &mut ProgressTracker<'_, F>,
+) -> Result<CloneOutcome> {
+    kill_process_tree(pid, child).await;
+    let _ = cleanup_clone_target(tracker.target_path, existed_before).await;
+    let msg = format!("Failed reading git clone output: {err}");
+    tracker.emit(CloneStage::Error, tracker.percent, "Clone failed", false, Some(msg));
+    Err(CoreError::Io(err))
 }

@@ -12,7 +12,7 @@ use axum::{
 use git_widget_core::{
     clone::{run_clone, CloneOptions, CloneTimeouts},
     clone_progress::{CloneProgressSnapshot, CloneStage},
-    clone_validation::{parse_clone_url, prepare_clone_target},
+    clone_validation::{parse_clone_url, prepare_clone_target, validate_folder_name},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -26,7 +26,7 @@ pub struct StartCloneRequest {
     pub url: String,
     pub parent_dir: String,
     #[serde(default)]
-    pub folder_name: String,
+    pub folder_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -120,33 +120,38 @@ pub async fn start_clone_handler(
         Err(e) => return map_err(e),
     };
     let parent_dir = body.parent_dir.trim().to_string();
-    let folder_name = body.folder_name;
-    let guard = match prepare_clone_target(Path::new(&parent_dir), &folder_name) {
-        Ok(g) => g,
-        Err(e) => return map_err(e),
-    };
-
-    let initial = CloneStatusResponse {
-        stage: CloneStage::Starting,
-        percent: 1,
-        phase_label: "Starting clone...".to_string(),
-        target_path: Some(guard.target_path.to_string_lossy().to_string()),
-        sanitized_url: Some(source.sanitized_url.clone()),
-        in_progress: true,
-        error: None,
-        log_tail: Vec::new(),
-    };
+    let folder_name = body
+        .folder_name
+        .unwrap_or_else(|| source.default_folder.clone());
+    if let Err(e) = validate_folder_name(&folder_name) {
+        return map_err(e);
+    }
 
     let (tx, rx) = watch::channel(false);
     let rx_observer = rx.clone();
-    {
+    let initial = {
         let mut status_guard = st.clone.status.write().await;
         if status_guard.in_progress {
             return (StatusCode::CONFLICT, Json(status_guard.clone())).into_response();
         }
+        let guard = match prepare_clone_target(Path::new(&parent_dir), &folder_name) {
+            Ok(g) => g,
+            Err(e) => return map_err(e),
+        };
+        let snap = CloneStatusResponse {
+            stage: CloneStage::Starting,
+            percent: 1,
+            phase_label: "Starting clone...".to_string(),
+            target_path: Some(guard.target_path.to_string_lossy().to_string()),
+            sanitized_url: Some(source.sanitized_url.clone()),
+            in_progress: true,
+            error: None,
+            log_tail: Vec::new(),
+        };
         *st.clone.cancel_tx.lock().await = Some(tx);
-        *status_guard = initial.clone();
-    }
+        *status_guard = snap.clone();
+        snap
+    };
 
     {
         let mut cfg_guard = st.config.write().await;
@@ -163,7 +168,7 @@ pub async fn start_clone_handler(
         folder_name: Some(folder_name),
         timeouts: st.clone.timeouts,
     };
-    let target_str = guard.target_path.to_string_lossy().to_string();
+    let target_str = initial.target_path.clone().unwrap_or_default();
     let sanitized = source.sanitized_url;
     tokio::spawn(async move {
         let mgr_status = Arc::clone(&bg);

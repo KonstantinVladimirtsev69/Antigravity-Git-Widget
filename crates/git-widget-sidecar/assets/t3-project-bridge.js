@@ -148,6 +148,7 @@
 
   window.addEventListener('message', (event) => {
     if (event.origin !== IFRAME_ORIGIN) return;
+    if (iframeEl && iframeEl.contentWindow && event.source !== iframeEl.contentWindow) return;
     const data = event.data;
     if (!data || typeof data.type !== 'string') return;
     if (data.type === 'git-widget-add-project') {

@@ -170,7 +170,7 @@ export function CloneModal({
         </>
       )}
 
-      {status && status.stage !== 'idle' && <CloneProgress status={status} cancelling={cancelling} onCancel={onCancelClone} />}
+      {status && status.stage !== 'idle' && (status.in_progress || !formError) && <CloneProgress status={status} cancelling={cancelling} onCancel={onCancelClone} />}
       {visibleError && <div style={{ color: '#fca5a5', fontSize: 11, wordBreak: 'break-word' }}>{visibleError}</div>}
 
       {donePath ? (

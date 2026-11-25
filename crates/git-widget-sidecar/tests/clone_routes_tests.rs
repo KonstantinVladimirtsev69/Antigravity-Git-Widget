@@ -147,6 +147,7 @@ async fn clone_happy_path_and_auth_401() {
 
     for bad in [
         serde_json::json!({ "url": "--upload-pack=x", "parent_dir": parent, "folder_name": "ok" }),
+        serde_json::json!({ "url": &bare_url, "parent_dir": parent, "folder_name": "" }),
         serde_json::json!({ "url": &bare_url, "parent_dir": parent, "folder_name": "CON" }),
         serde_json::json!({ "url": &bare_url, "parent_dir": parent, "folder_name": "../evil" }),
         serde_json::json!({ "url": &bare_url, "parent_dir": parent, "folder_name": "existing" }),
@@ -178,7 +179,10 @@ async fn clone_single_flight_409() {
     let (st1, b1) = http_req(addr, "POST", "/api/clone", Some("tok"), Some(&p1)).await;
     assert_eq!(st1, 202, "b1: {b1}");
 
-    let p2 = serde_json::json!({ "url": "ssh://git@127.0.0.1/org/two.git", "parent_dir": root, "folder_name": "two" }).to_string();
+    let nonempty = root.join("already_nonempty");
+    fs::create_dir_all(&nonempty).unwrap();
+    fs::write(nonempty.join("file.txt"), "busy").unwrap();
+    let p2 = serde_json::json!({ "url": "ssh://git@127.0.0.1/org/two.git", "parent_dir": root, "folder_name": "already_nonempty" }).to_string();
     let (st2, b2) = http_req(addr, "POST", "/api/clone", Some("tok"), Some(&p2)).await;
     assert_eq!(st2, 409, "expected 409 Conflict, got {st2}: {b2}");
     let conflict: CloneStatusResponse = serde_json::from_str(&b2).unwrap();
@@ -241,9 +245,11 @@ async fn clone_preserves_last_clone_dir_and_config_save_keeps_it() {
     fs::create_dir_all(&parent).unwrap();
     let addr = spawn_sidecar(make_state(None)).await;
 
-    let req = serde_json::json!({ "url": bare_url, "parent_dir": parent, "folder_name": "app1" }).to_string();
+    let req = serde_json::json!({ "url": bare_url, "parent_dir": parent }).to_string();
     assert_eq!(http_req(addr, "POST", "/api/clone", None, Some(&req)).await.0, 202);
-    let _ = poll_until_idle(addr, None).await;
+    let done = poll_until_idle(addr, None).await;
+    assert_eq!(done.stage, CloneStage::Done);
+    assert!(parent.join("bare-remote").join(".git").is_dir());
 
     let (st_r, body_r) = http_req(addr, "GET", "/api/repos", None, None).await;
     assert_eq!(st_r, 200);
