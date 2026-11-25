@@ -1,6 +1,9 @@
 //! HTTP routes and single-flight coordinator for `/api/clone*`.
 
-use crate::routes::{check_auth, map_err, AppState};
+use crate::{
+    config::save_config,
+    routes::{check_auth, map_err, AppState},
+};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -123,9 +126,6 @@ pub async fn start_clone_handler(
         Err(e) => return map_err(e),
     };
 
-    let (tx, rx) = watch::channel(false);
-    *st.clone.cancel_tx.lock().await = Some(tx);
-
     let initial = CloneStatusResponse {
         stage: CloneStage::Starting,
         percent: 1,
@@ -136,7 +136,25 @@ pub async fn start_clone_handler(
         error: None,
         log_tail: Vec::new(),
     };
-    *st.clone.status.write().await = initial.clone();
+
+    let (tx, rx) = watch::channel(false);
+    let rx_observer = rx.clone();
+    {
+        let mut status_guard = st.clone.status.write().await;
+        if status_guard.in_progress {
+            return (StatusCode::CONFLICT, Json(status_guard.clone())).into_response();
+        }
+        *st.clone.cancel_tx.lock().await = Some(tx);
+        *status_guard = initial.clone();
+    }
+
+    {
+        let mut cfg_guard = st.config.write().await;
+        cfg_guard.last_clone_dir = Some(parent_dir.clone());
+        if !st.clone.is_test_mode() {
+            let _ = save_config(&cfg_guard);
+        }
+    }
 
     let bg = Arc::clone(&st);
     let opts = CloneOptions {
@@ -170,9 +188,21 @@ pub async fn start_clone_handler(
                 status_guard.log_tail = outcome.log_tail;
             }
             Err(err) => {
-                if status_guard.in_progress {
-                    status_guard.stage = CloneStage::Error;
-                    status_guard.phase_label = "Clone failed".to_string();
+                if status_guard.in_progress
+                    || !matches!(status_guard.stage, CloneStage::Cancelled | CloneStage::Error)
+                {
+                    let was_cancelled = *rx_observer.borrow();
+                    status_guard.stage = if was_cancelled {
+                        CloneStage::Cancelled
+                    } else {
+                        CloneStage::Error
+                    };
+                    status_guard.phase_label = if was_cancelled {
+                        "Clone cancelled"
+                    } else {
+                        "Clone failed"
+                    }
+                    .to_string();
                     status_guard.target_path = Some(target_str);
                     status_guard.sanitized_url = Some(sanitized);
                     status_guard.in_progress = false;
@@ -195,6 +225,9 @@ pub async fn clone_status_handler(State(st): State<Arc<AppState>>, headers: Head
 pub async fn cancel_clone_handler(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(r) = check_auth(&st, &headers) {
         return r;
+    }
+    if let Some(tx) = st.clone.cancel_tx.lock().await.as_ref() {
+        let _ = tx.send(true);
     }
     Json(st.clone.status.read().await.clone()).into_response()
 }
