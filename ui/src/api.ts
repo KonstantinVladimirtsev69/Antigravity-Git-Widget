@@ -1,5 +1,6 @@
 import type {
   ActionPreview,
+  CloneStatusResponse,
   CommitDetails,
   CommitInfo,
   ConflictChatResponse,
@@ -13,10 +14,12 @@ import type {
   GuardedOpOutcome,
   IntegrationMode,
   OpResult,
+  PickFolderResponse,
   PrListResponse,
   RepoStatus,
   ReposResponse,
   ScannerConfig,
+  StartCloneRequest,
   StashEntry,
   UpdateCheckResponse,
   UpdateStatusResponse,
@@ -252,4 +255,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ repo, file, snippet, question, conversation_id: conversationId || null }),
     }),
+  startClone: (payload: StartCloneRequest) =>
+    request<CloneStatusResponse>('./api/clone', { method: 'POST', body: JSON.stringify(payload) }),
+  getCloneStatus: () => request<CloneStatusResponse>('./api/clone/status'),
+  cancelClone: () => request<CloneStatusResponse>('./api/clone/cancel', { method: 'POST', body: '{}' }),
+  pickFolder: (initialDir?: string | null) =>
+    request<PickFolderResponse>('./api/fs/pick-folder', {
+      method: 'POST',
+      body: JSON.stringify({ initial_dir: initialDir ?? null }),
+    }),
+  openExplorer: async (path: string): Promise<void> => {
+    await request<{ ok: boolean }>('./api/fs/open-explorer', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    });
+  },
 };
