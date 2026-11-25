@@ -76,7 +76,7 @@
         if (typeof token === 'string' && token.trim()) bearer = token.trim();
       } catch (_) {}
     }
-    return { baseUrl, bearer, credentials: baseUrl ? 'include' : 'same-origin' };
+    return { baseUrl, bearer, credentials: baseUrl ? 'omit' : 'same-origin' };
   }
 
   function t3ApiFetch(ctx, apiPath, init) {
@@ -170,12 +170,13 @@
       notifyWorkspace();
       showToast('Project added to T3 Code');
       return reply('added', 'Project added to T3 Code');
-    } catch (_) {
+    } catch (err) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(path).catch(() => {});
       }
+      const reason = err && err.message && err.message !== 'API_UNSUPPORTED' ? ` (${err.message})` : '';
       showToast('Path copied to clipboard — add project manually in T3 Code');
-      return reply('fallback', 'Path copied to clipboard — add project manually in T3 Code');
+      return reply('fallback', `Path copied to clipboard — add project manually in T3 Code${reason}`);
     }
   }
 

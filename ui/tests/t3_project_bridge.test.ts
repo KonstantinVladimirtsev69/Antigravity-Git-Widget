@@ -117,9 +117,10 @@ test('Add to T3 Code uses desktopBridge httpBaseUrl and Bearer token on T3 Code 
   assert.equal(ctx.fetchCalls.length, 2);
   assert.equal(ctx.fetchCalls[0]?.url, 'http://127.0.0.1:41234/api/projects');
   assert.equal(ctx.fetchCalls[0]?.options.headers?.Authorization, 'Bearer secret-desktop-bearer');
-  assert.equal(ctx.fetchCalls[0]?.options.credentials, 'include');
+  assert.equal(ctx.fetchCalls[0]?.options.credentials, 'omit');
   assert.equal(ctx.fetchCalls[1]?.url, 'http://127.0.0.1:41234/api/projects/mutate');
   assert.equal(ctx.fetchCalls[1]?.options.headers?.Authorization, 'Bearer secret-desktop-bearer');
+  assert.equal(ctx.fetchCalls[1]?.options.credentials, 'omit');
 
   const reply = ctx.postedToIframe.find(
     (m) => (m as { type?: string }).type === 'git-widget-add-project-result',
