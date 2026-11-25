@@ -49,12 +49,21 @@ test('CloneModal explains auto-filled folder name in English', () => {
   assert.match(modal, /Add to T3 Code/);
 });
 
-test('folder_picker avoids invisible WS_EX_TOPMOST STATIC owner', () => {
+test('folder_picker uses layered non-topmost owner and restores host focus before DestroyWindow', () => {
   const picker = readRel('crates/git-widget-sidecar/src/folder_picker.rs');
   assert.equal(
-    picker.includes('WS_EX_TOPMOST | WS_EX_TOOLWINDOW'),
+    picker.includes('WS_EX_TOPMOST'),
     false,
-    'folder_picker.rs must not create an invisible WS_EX_TOPMOST toolwindow owner',
+    'folder_picker.rs must not use WS_EX_TOPMOST on owner or dialog',
   );
-  assert.match(picker, /Show\(None\)/);
+  assert.equal(
+    picker.includes('HWND_TOPMOST'),
+    false,
+    'folder_picker.rs must not toggle HWND_TOPMOST',
+  );
+  assert.match(picker, /WS_EX_LAYERED/);
+  assert.match(picker, /LWA_ALPHA/);
+  const restoreIdx = picker.indexOf('restore_host_focus');
+  const dropOwnerIdx = picker.indexOf('drop(owner_guard)');
+  assert.ok(restoreIdx > 0 && dropOwnerIdx > restoreIdx, 'Must restore host_fg before dropping owner_guard');
 });

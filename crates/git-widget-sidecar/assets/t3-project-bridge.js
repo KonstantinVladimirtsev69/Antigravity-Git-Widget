@@ -54,6 +54,40 @@
     return false;
   }
 
+  async function resolveT3HttpContext() {
+    const bridge = window.desktopBridge;
+    if (!bridge || typeof bridge.getLocalEnvironmentBootstraps !== 'function') {
+      return { baseUrl: '', bearer: null, credentials: 'same-origin' };
+    }
+    let baseUrl = '';
+    try {
+      const list = bridge.getLocalEnvironmentBootstraps();
+      if (Array.isArray(list)) {
+        const entry =
+          list.find((b) => b && b.id === 'primary' && typeof b.httpBaseUrl === 'string' && b.httpBaseUrl) ||
+          list.find((b) => b && typeof b.httpBaseUrl === 'string' && b.httpBaseUrl);
+        if (entry) baseUrl = entry.httpBaseUrl.replace(/\/+$/, '');
+      }
+    } catch (_) {}
+    let bearer = null;
+    if (baseUrl && typeof bridge.getLocalEnvironmentBearerToken === 'function') {
+      try {
+        const token = await bridge.getLocalEnvironmentBearerToken();
+        if (typeof token === 'string' && token.trim()) bearer = token.trim();
+      } catch (_) {}
+    }
+    return { baseUrl, bearer, credentials: baseUrl ? 'include' : 'same-origin' };
+  }
+
+  function t3ApiFetch(ctx, apiPath, init) {
+    const opts = init ? { ...init } : {};
+    const headers = opts.headers ? { ...opts.headers } : {};
+    if (ctx.bearer) headers.Authorization = `Bearer ${ctx.bearer}`;
+    if (Object.keys(headers).length > 0) opts.headers = headers;
+    opts.credentials = ctx.credentials;
+    return fetch(`${ctx.baseUrl}${apiPath}`, opts);
+  }
+
   async function handleAddProjectToT3(payload, origin) {
     const path = payload && typeof payload.path === 'string' ? payload.path.trim() : '';
     const requestId = (payload && payload.requestId) || '';
@@ -77,19 +111,19 @@
     };
     if (!path) return reply('error', 'Empty repository path');
     try {
-      const res = await fetch('/api/projects', { credentials: 'same-origin' });
+      const ctx = await resolveT3HttpContext();
+      const res = await t3ApiFetch(ctx, '/api/projects');
       if (res.status === 404 || res.status === 405) throw new Error('API_UNSUPPORTED');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const snap = await res.json();
       const list = Array.isArray(snap.projects) ? snap.projects : [];
       const targetNorm = normWinPath(path);
-      const existing = list.find((p) => normWinPath(p.workspaceRoot) === targetNorm);
+      const existing = list.find((p) => !p.deletedAt && normWinPath(p.workspaceRoot) === targetNorm);
 
       if (existing) {
         if (existing.archivedAt) {
-          const mut = await fetch('/api/projects/mutate', {
+          const mut = await t3ApiFetch(ctx, '/api/projects/mutate', {
             method: 'POST',
-            credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               type: 'project.update',
@@ -110,9 +144,8 @@
         return reply('already_exists', 'Project already registered in T3 Code');
       }
 
-      const createRes = await fetch('/api/projects/mutate', {
+      const createRes = await t3ApiFetch(ctx, '/api/projects/mutate', {
         method: 'POST',
-        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: 'project.create',

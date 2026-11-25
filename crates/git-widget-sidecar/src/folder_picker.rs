@@ -30,9 +30,9 @@ pub async fn pick_folder(initial_dir: Option<String>) -> Result<Option<String>, 
 #[cfg(windows)]
 fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> {
     use windows::{
-        core::{implement, Interface, Ref, Result as WinResult, HSTRING},
+        core::{implement, w, Interface, Ref, Result as WinResult, HSTRING},
         Win32::{
-            Foundation::{ERROR_CANCELLED, HWND},
+            Foundation::{COLORREF, ERROR_CANCELLED, HWND, RECT},
             System::{
                 Com::{
                     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
@@ -49,9 +49,10 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
                     FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
                 },
                 WindowsAndMessaging::{
-                    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
-                    IsWindowVisible, SetForegroundWindow, SetWindowPos, HWND_NOTOPMOST,
-                    HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+                    BringWindowToTop, CreateWindowExW, DestroyWindow, GetForegroundWindow,
+                    GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
+                    SetForegroundWindow, SetLayeredWindowAttributes, ShowWindow, LWA_ALPHA,
+                    SW_SHOWNOACTIVATE, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
                 },
             },
         },
@@ -62,6 +63,15 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
         fn drop(&mut self) {
             unsafe {
                 CoUninitialize();
+            }
+        }
+    }
+
+    struct OwnerGuard(HWND);
+    impl Drop for OwnerGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = DestroyWindow(self.0);
             }
         }
     }
@@ -89,7 +99,7 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
                 if !self.once.try_claim() {
                     return;
                 }
-                bring_to_foreground_once(dlg_hwnd);
+                focus_window_once(dlg_hwnd);
             }
         }
     }
@@ -132,8 +142,11 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
         }
     }
 
-    unsafe fn bring_to_foreground_once(hwnd: HWND) {
+    unsafe fn focus_window_once(hwnd: HWND) {
         let cur_fg = GetForegroundWindow();
+        if cur_fg == hwnd {
+            return;
+        }
         let cur_tid = GetCurrentThreadId();
         let fg_tid = if !cur_fg.0.is_null() {
             GetWindowThreadProcessId(cur_fg, None)
@@ -143,29 +156,27 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
         let attached = fg_tid != 0
             && fg_tid != cur_tid
             && AttachThreadInput(cur_tid, fg_tid, true).as_bool();
-        let _ = SetWindowPos(
-            hwnd,
-            Some(HWND_TOPMOST),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE,
-        );
-        let _ = SetWindowPos(
-            hwnd,
-            Some(HWND_NOTOPMOST),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE,
-        );
         let _ = BringWindowToTop(hwnd);
         let _ = SetForegroundWindow(hwnd);
         if attached {
             let _ = AttachThreadInput(cur_tid, fg_tid, false);
         }
+    }
+
+    unsafe fn restore_host_focus(host_fg: HWND) {
+        if !host_fg.0.is_null() && IsWindow(Some(host_fg)).as_bool() {
+            focus_window_once(host_fg);
+        }
+    }
+
+    unsafe fn center_of_window(hwnd: HWND) -> (i32, i32) {
+        let mut rect = RECT::default();
+        if !hwnd.0.is_null() && GetWindowRect(hwnd, &mut rect).is_ok() {
+            let cx = rect.left + (rect.right - rect.left) / 2;
+            let cy = rect.top + (rect.bottom - rect.top) / 2;
+            return (cx, cy);
+        }
+        (0, 0)
     }
 
     unsafe {
@@ -175,6 +186,26 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
         let _com = ComGuard;
 
         let host_fg = GetForegroundWindow();
+        let (cx, cy) = center_of_window(host_fg);
+        let owner = CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+            w!("STATIC"),
+            w!(""),
+            WS_POPUP,
+            cx,
+            cy,
+            1,
+            1,
+            None,
+            None,
+            None,
+            None,
+        )
+        .map_err(|e| format!("Failed creating picker owner window: {e}"))?;
+        let _ = SetLayeredWindowAttributes(owner, COLORREF(0), 0, LWA_ALPHA);
+        let _ = ShowWindow(owner, SW_SHOWNOACTIVATE);
+        let owner_guard = OwnerGuard(owner);
+
         let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed creating IFileOpenDialog: {e}"))?;
 
@@ -197,14 +228,13 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
         }
         .into();
         let cookie = dialog.Advise(&events).ok();
-        let show_res = dialog.Show(None);
+        let show_res = dialog.Show(Some(owner));
         if let Some(c) = cookie {
             let _ = dialog.Unadvise(c);
         }
 
-        if !host_fg.0.is_null() && IsWindow(Some(host_fg)).as_bool() {
-            let _ = SetForegroundWindow(host_fg);
-        }
+        restore_host_focus(host_fg);
+        drop(owner_guard);
 
         match show_res {
             Ok(()) => {}
