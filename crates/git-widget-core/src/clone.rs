@@ -2,8 +2,7 @@
 
 use crate::{
     clone_progress::{
-        classify_clone_error, parse_git_progress_line, CloneProgressSnapshot, CloneStage,
-        LogRingBuffer,
+        classify_clone_error, CloneProgressSnapshot, CloneStage, ProgressTracker,
     },
     clone_validation::{parse_clone_url, prepare_clone_target},
     error::{CoreError, Result},
@@ -72,58 +71,6 @@ pub fn build_clone_command(url: &str, target: &Path) -> Command {
     cmd
 }
 
-fn make_snapshot(
-    stage: CloneStage,
-    percent: u8,
-    phase_label: impl Into<String>,
-    target_path: &Path,
-    sanitized_url: &str,
-    in_progress: bool,
-    error: Option<String>,
-    log_tail: Vec<String>,
-) -> CloneProgressSnapshot {
-    CloneProgressSnapshot {
-        stage,
-        percent,
-        phase_label: phase_label.into(),
-        target_path: target_path.to_string_lossy().to_string(),
-        sanitized_url: sanitized_url.to_string(),
-        in_progress,
-        error,
-        log_tail,
-    }
-}
-
-fn handle_stderr_line<F>(
-    raw_line: &str,
-    ring: &mut LogRingBuffer,
-    stage: &mut CloneStage,
-    percent: &mut u8,
-    phase_label: &mut String,
-    target_path: &Path,
-    sanitized_url: &str,
-    on_progress: &mut F,
-) where
-    F: FnMut(CloneProgressSnapshot) + Send,
-{
-    ring.push(raw_line);
-    if let Some((s, p, lbl)) = parse_git_progress_line(raw_line) {
-        *stage = s;
-        *percent = (*percent).max(p);
-        *phase_label = lbl;
-    }
-    on_progress(make_snapshot(
-        *stage,
-        *percent,
-        phase_label.as_str(),
-        target_path,
-        sanitized_url,
-        true,
-        None,
-        ring.entries(),
-    ));
-}
-
 /// Forcefully kills `git.exe` and its child process tree (`git-remote-https`, `ssh`, etc.)
 /// and awaits child handle exit before filesystem cleanup (R5).
 pub async fn kill_process_tree(pid: Option<u32>, child: &mut Child) {
@@ -166,13 +113,8 @@ fn remove_target_once(target: &Path, existed_before: bool) -> std::io::Result<()
         return fs::remove_dir_all(target);
     }
     for entry in fs::read_dir(target)? {
-        let entry = entry?;
-        let p = entry.path();
-        if p.is_dir() {
-            fs::remove_dir_all(&p)?;
-        } else {
-            fs::remove_file(&p)?;
-        }
+        let p = entry?.path();
+        if p.is_dir() { fs::remove_dir_all(&p)?; } else { fs::remove_file(&p)?; }
     }
     Ok(())
 }
@@ -183,8 +125,7 @@ pub async fn cleanup_clone_target(target: &Path, existed_before: bool) -> std::i
     for attempt in 0..CLEANUP_MAX_ATTEMPTS {
         match remove_target_once(target, existed_before) {
             Ok(()) => return Ok(()),
-            Err(err) if attempt + 1 < CLEANUP_MAX_ATTEMPTS => {
-                let _ = err;
+            Err(_) if attempt + 1 < CLEANUP_MAX_ATTEMPTS => {
                 clear_readonly_recursive(target);
                 sleep(CLEANUP_RETRY_DELAY).await;
             }
@@ -199,7 +140,7 @@ pub async fn cleanup_clone_target(target: &Path, existed_before: bool) -> std::i
 pub async fn run_clone<F>(
     opts: CloneOptions,
     mut cancel_rx: watch::Receiver<bool>,
-    mut on_progress: F,
+    on_progress: F,
 ) -> Result<CloneOutcome>
 where
     F: FnMut(CloneProgressSnapshot) + Send,
@@ -207,42 +148,36 @@ where
     let source = parse_clone_url(&opts.url)?;
     let raw_folder = opts.folder_name.as_deref().unwrap_or(&source.default_folder);
     let guard = prepare_clone_target(&opts.parent_dir, raw_folder)?;
-
     if *cancel_rx.borrow() {
         return Err(CoreError::InvalidInput("Clone cancelled by user.".into()));
     }
 
-    let mut ring = LogRingBuffer::new(LOG_RING_CAPACITY);
-    let mut stage = CloneStage::Starting;
-    let mut percent = 1u8;
-    let mut phase_label = "Starting clone...".to_string();
-    on_progress(make_snapshot(
-        stage, percent, &phase_label, &guard.target_path, &source.sanitized_url, true, None, Vec::new(),
-    ));
+    let mut tracker = ProgressTracker::new(
+        LOG_RING_CAPACITY,
+        &guard.target_path,
+        &source.sanitized_url,
+        on_progress,
+    );
+    tracker.emit(CloneStage::Starting, 1, "Starting clone...", true, None);
 
     let mut child = build_clone_command(&source.normalized_url, &guard.target_path).spawn()?;
     let pid = child.id();
     let mut stderr = child.stderr.take();
     let total_deadline = Instant::now() + opts.timeouts.total;
     let mut last_output_at = Instant::now();
-    let mut cancelled = false;
-    let mut cancel_open = true;
-    let mut timeout_kind: Option<&'static str> = None;
-    let mut buf = [0u8; 4096];
-    let mut pending = Vec::<u8>::new();
+    let (mut cancelled, mut cancel_open, mut timeout_kind) = (false, true, None);
+    let (mut buf, mut pending) = ([0u8; 4096], Vec::<u8>::new());
 
     if let Some(ref mut pipe) = stderr {
         loop {
             let idle_deadline = last_output_at + opts.timeouts.idle;
             tokio::select! {
                 biased;
-                res = cancel_rx.changed(), if cancel_open => {
-                    match res {
-                        Ok(()) if *cancel_rx.borrow() => { cancelled = true; break; }
-                        Ok(()) => {}
-                        Err(_) => { cancel_open = false; }
-                    }
-                }
+                res = cancel_rx.changed(), if cancel_open => match res {
+                    Ok(()) if *cancel_rx.borrow() => { cancelled = true; break; }
+                    Ok(()) => {}
+                    Err(_) => { cancel_open = false; }
+                },
                 _ = sleep_until(idle_deadline) => { timeout_kind = Some("idle"); break; }
                 _ = sleep_until(total_deadline) => { timeout_kind = Some("total"); break; }
                 read_res = pipe.read(&mut buf) => {
@@ -254,7 +189,7 @@ where
                             if !pending.is_empty() {
                                 let line = String::from_utf8_lossy(&pending).to_string();
                                 pending.clear();
-                                handle_stderr_line(&line, &mut ring, &mut stage, &mut percent, &mut phase_label, &guard.target_path, &source.sanitized_url, &mut on_progress);
+                                tracker.push_line(&line);
                             }
                         } else {
                             pending.push(b);
@@ -265,70 +200,65 @@ where
         }
         if !cancelled && timeout_kind.is_none() && !pending.is_empty() {
             let line = String::from_utf8_lossy(&pending).to_string();
-            handle_stderr_line(&line, &mut ring, &mut stage, &mut percent, &mut phase_label, &guard.target_path, &source.sanitized_url, &mut on_progress);
+            tracker.push_line(&line);
         }
     }
     drop(stderr);
 
     if cancelled || timeout_kind.is_some() {
-        return abort_clone(pid, &mut child, &guard.target_path, guard.existed_before, &source.sanitized_url, percent, &ring, cancelled, timeout_kind, &opts.timeouts, &mut on_progress).await;
+        return abort_clone(pid, &mut child, guard.existed_before, cancelled, timeout_kind, &opts.timeouts, &mut tracker).await;
     }
 
     let status = loop {
         tokio::select! {
             biased;
-            res = cancel_rx.changed(), if cancel_open => {
-                match res {
-                    Ok(()) if *cancel_rx.borrow() => { cancelled = true; break None; }
-                    Ok(()) => {}
-                    Err(_) => { cancel_open = false; }
-                }
-            }
+            res = cancel_rx.changed(), if cancel_open => match res {
+                Ok(()) if *cancel_rx.borrow() => { cancelled = true; break None; }
+                Ok(()) => {}
+                Err(_) => { cancel_open = false; }
+            },
             _ = sleep_until(total_deadline) => { timeout_kind = Some("total"); break None; }
             wait_res = child.wait() => break Some(wait_res?),
         }
     };
 
     let Some(status) = status else {
-        return abort_clone(pid, &mut child, &guard.target_path, guard.existed_before, &source.sanitized_url, percent, &ring, cancelled, timeout_kind, &opts.timeouts, &mut on_progress).await;
+        return abort_clone(pid, &mut child, guard.existed_before, cancelled, timeout_kind, &opts.timeouts, &mut tracker).await;
     };
 
-    let log_tail = ring.entries();
+    let log_tail = tracker.ring.entries();
     if status.success() {
-        on_progress(make_snapshot(CloneStage::Done, 100, "Clone complete", &guard.target_path, &source.sanitized_url, false, None, log_tail.clone()));
-        Ok(CloneOutcome { target_path: guard.target_path, sanitized_url: source.sanitized_url, existed_before: guard.existed_before, log_tail })
+        tracker.emit(CloneStage::Done, 100, "Clone complete", false, None);
+        Ok(CloneOutcome {
+            target_path: guard.target_path,
+            sanitized_url: source.sanitized_url,
+            existed_before: guard.existed_before,
+            log_tail,
+        })
     } else {
         let code = status.code().unwrap_or(-1);
         let _ = cleanup_clone_target(&guard.target_path, guard.existed_before).await;
         let msg = classify_clone_error(code, &log_tail, false, None);
-        on_progress(make_snapshot(CloneStage::Error, percent, "Clone failed", &guard.target_path, &source.sanitized_url, false, Some(msg.clone()), log_tail));
+        tracker.emit(CloneStage::Error, tracker.percent, "Clone failed", false, Some(msg.clone()));
         Err(CoreError::GitFailed { code, stderr: msg })
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn abort_clone<F>(
+async fn abort_clone<F: FnMut(CloneProgressSnapshot) + Send>(
     pid: Option<u32>,
     child: &mut Child,
-    target_path: &Path,
     existed_before: bool,
-    sanitized_url: &str,
-    percent: u8,
-    ring: &LogRingBuffer,
     cancelled: bool,
     timeout_kind: Option<&str>,
     timeouts: &CloneTimeouts,
-    on_progress: &mut F,
-) -> Result<CloneOutcome>
-where
-    F: FnMut(CloneProgressSnapshot) + Send,
-{
+    tracker: &mut ProgressTracker<'_, F>,
+) -> Result<CloneOutcome> {
     kill_process_tree(pid, child).await;
-    let _ = cleanup_clone_target(target_path, existed_before).await;
-    let log_tail = ring.entries();
+    let _ = cleanup_clone_target(tracker.target_path, existed_before).await;
+    let log_tail = tracker.ring.entries();
     let msg = classify_clone_error(-1, &log_tail, cancelled, timeout_kind);
     let (stage, label) = if cancelled { (CloneStage::Cancelled, "Clone cancelled") } else { (CloneStage::Error, "Clone timed out") };
-    on_progress(make_snapshot(stage, percent, label, target_path, sanitized_url, false, Some(msg.clone()), log_tail));
+    tracker.emit(stage, tracker.percent, label, false, Some(msg.clone()));
     if cancelled {
         Err(CoreError::InvalidInput(msg))
     } else {

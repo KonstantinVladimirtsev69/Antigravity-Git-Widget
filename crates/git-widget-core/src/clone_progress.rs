@@ -31,6 +31,30 @@ pub struct CloneProgressSnapshot {
     pub log_tail: Vec<String>,
 }
 
+impl CloneProgressSnapshot {
+    pub fn new(
+        stage: CloneStage,
+        percent: u8,
+        phase_label: impl Into<String>,
+        target_path: &std::path::Path,
+        sanitized_url: &str,
+        in_progress: bool,
+        error: Option<String>,
+        log_tail: Vec<String>,
+    ) -> Self {
+        Self {
+            stage,
+            percent,
+            phase_label: phase_label.into(),
+            target_path: target_path.to_string_lossy().to_string(),
+            sanitized_url: sanitized_url.to_string(),
+            in_progress,
+            error,
+            log_tail,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LogRingBuffer {
     max_len: usize,
@@ -152,4 +176,52 @@ pub fn classify_clone_error(
         format!("git clone failed ({code}): {detail}")
     };
     redact_url_credentials(&msg)
+}
+
+pub(crate) struct ProgressTracker<'a, F> {
+    pub ring: LogRingBuffer,
+    pub stage: CloneStage,
+    pub percent: u8,
+    pub phase_label: String,
+    pub target_path: &'a std::path::Path,
+    pub sanitized_url: &'a str,
+    on_progress: F,
+}
+
+impl<'a, F: FnMut(CloneProgressSnapshot) + Send> ProgressTracker<'a, F> {
+    pub fn new(capacity: usize, target_path: &'a std::path::Path, sanitized_url: &'a str, on_progress: F) -> Self {
+        Self {
+            ring: LogRingBuffer::new(capacity),
+            stage: CloneStage::Starting,
+            percent: 1,
+            phase_label: "Starting clone...".to_string(),
+            target_path,
+            sanitized_url,
+            on_progress,
+        }
+    }
+
+    pub fn emit(&mut self, stage: CloneStage, percent: u8, label: &str, in_progress: bool, error: Option<String>) {
+        (self.on_progress)(CloneProgressSnapshot::new(
+            stage,
+            percent,
+            label,
+            self.target_path,
+            self.sanitized_url,
+            in_progress,
+            error,
+            self.ring.entries(),
+        ));
+    }
+
+    pub fn push_line(&mut self, raw_line: &str) {
+        self.ring.push(raw_line);
+        if let Some((s, p, lbl)) = parse_git_progress_line(raw_line) {
+            self.stage = s;
+            self.percent = self.percent.max(p);
+            self.phase_label = lbl;
+        }
+        let (stage, pct, lbl) = (self.stage, self.percent, self.phase_label.clone());
+        self.emit(stage, pct, &lbl, true, None);
+    }
 }
