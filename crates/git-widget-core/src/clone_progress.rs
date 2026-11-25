@@ -106,11 +106,50 @@ pub fn parse_git_progress_line(line: &str) -> Option<(CloneStage, u8, String)> {
     Some((stage, overall.min(99), format!("{label} ({raw_pct}%)")))
 }
 
+/// Produces a user-friendly, credential-redacted clone failure message (R4, P2).
 pub fn classify_clone_error(
-    _code: i32,
-    _log_tail: &[String],
-    _cancelled: bool,
-    _timeout_kind: Option<&str>,
+    code: i32,
+    log_tail: &[String],
+    cancelled: bool,
+    timeout_kind: Option<&str>,
 ) -> String {
-    String::new()
+    if cancelled {
+        return "Clone cancelled by user.".to_string();
+    }
+    match timeout_kind {
+        Some("idle") => {
+            return "Clone timed out: no progress output received within the idle limit.".to_string();
+        }
+        Some("total") => {
+            return "Clone timed out: exceeded maximum total clone duration.".to_string();
+        }
+        _ => {}
+    }
+
+    let detail = redact_url_credentials(&log_tail.join(" | "));
+    let lower = detail.to_ascii_lowercase();
+    let msg = if lower.contains("authentication failed")
+        || lower.contains("permission denied")
+        || lower.contains("could not read username")
+        || lower.contains("could not read password")
+        || lower.contains("invalid username or token")
+    {
+        format!("Authentication failed: check your SSH key or Git credentials. {detail}")
+    } else if lower.contains("could not resolve host")
+        || lower.contains("connection refused")
+        || lower.contains("unable to access")
+        || lower.contains("connection timed out")
+        || lower.contains("network is unreachable")
+    {
+        format!("Network error while connecting to remote repository. {detail}")
+    } else if lower.contains("repository not found")
+        || lower.contains("does not appear to be a git repository")
+    {
+        format!("Repository not found or access denied. {detail}")
+    } else if detail.is_empty() {
+        format!("git clone failed with exit code {code}")
+    } else {
+        format!("git clone failed ({code}): {detail}")
+    };
+    redact_url_credentials(&msg)
 }
