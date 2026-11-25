@@ -1,6 +1,9 @@
 //! Core Git operations, repository scanner, and safety guards for git-widget.
 
 pub mod branches;
+pub mod clone;
+pub mod clone_progress;
+pub mod clone_validation;
 pub mod diff;
 pub mod diff_parser;
 pub mod error;
