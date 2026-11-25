@@ -78,6 +78,7 @@
     if (!path) return reply('error', 'Empty repository path');
     try {
       const res = await fetch('/api/projects', { credentials: 'same-origin' });
+      if (res.status === 404 || res.status === 405) throw new Error('API_UNSUPPORTED');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const snap = await res.json();
       const list = Array.isArray(snap.projects) ? snap.projects : [];
@@ -97,7 +98,12 @@
               archived: false,
             }),
           });
-          if (!mut.ok) throw new Error(`HTTP ${mut.status}`);
+          if (!mut.ok) {
+            if (mut.status === 404 || mut.status === 405 || mut.status === 400) {
+              throw new Error('API_UNSUPPORTED');
+            }
+            throw new Error(`HTTP ${mut.status}`);
+          }
         }
         notifyWorkspace();
         showToast('Проект уже есть в T3 Code');
@@ -116,12 +122,27 @@
           workspaceRoot: path,
         }),
       });
-      if (!createRes.ok) throw new Error(`HTTP ${createRes.status}`);
+      if (!createRes.ok) {
+        const txt = await createRes.text().catch(() => '');
+        if (txt.includes('ProjectWorkspaceConflictError')) {
+          notifyWorkspace();
+          showToast('Проект уже есть в T3 Code');
+          return reply('already_exists', 'Project already registered in T3 Code');
+        }
+        if (createRes.status === 404 || createRes.status === 405 || createRes.status === 400) {
+          throw new Error('API_UNSUPPORTED');
+        }
+        throw new Error(`HTTP ${createRes.status}`);
+      }
       notifyWorkspace();
       showToast('Проект добавлен в T3 Code');
       return reply('added', 'Project added to T3 Code');
-    } catch (err) {
-      return reply('error', err && err.message ? err.message : 'Add project failed');
+    } catch (_) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(path).catch(() => {});
+      }
+      showToast('Путь скопирован — добавьте папку в T3 Code вручную');
+      return reply('fallback', 'Path copied to clipboard — add project manually in T3 Code');
     }
   }
 
