@@ -1,18 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CONVERSATION_ID, api } from './api';
 import { BranchPanel } from './BranchPanel';
 import { ChangesPanel } from './ChangesPanel';
+import { AppModals } from './components/AppModals';
 import { ConflictBanner } from './components/ConflictBanner';
 import { FlowModals } from './components/FlowModals';
 import { HeaderBar } from './components/HeaderBar';
 import { NoticeFooter } from './components/NoticeFooter';
-import { UpdateModal } from './components/UpdateModal';
 import { DiffReview } from './DiffReview';
 import { GraphPanel } from './GraphPanel';
-import { RemoteModal, SettingsPanel } from './Modals';
 import { PrPanel } from './PrPanel';
 import { StashPanel } from './StashPanel';
 import { useAppUpdater } from './hooks/useAppUpdater';
+import { useClone } from './hooks/useClone';
 import { useIntegrationFlow } from './hooks/useIntegrationFlow';
 import { MODE_STORAGE_KEY, VALID_MODES, useRepoData } from './hooks/useRepoData';
 import { IS_T3_HOST, deliverPromptToHost } from './utils/hostBridge';
@@ -21,6 +21,14 @@ declare global {
   interface Window {
     __gwBridge?: { workspaceUris: string[]; subscribe: (fn: (uris: string[]) => void) => () => void };
   }
+}
+
+function parentDirOf(targetPath: string): string | null {
+  const cleaned = targetPath.trim().replace(/[\\/]+$/, '');
+  const idx = Math.max(cleaned.lastIndexOf('\\'), cleaned.lastIndexOf('/'));
+  if (idx <= 0) return null;
+  const dir = cleaned.slice(0, idx);
+  return /^[A-Za-z]:$/.test(dir) ? `${dir}\\` : dir;
 }
 
 export default function App() {
@@ -36,7 +44,21 @@ export default function App() {
   }, []);
 
   const updater = useAppUpdater();
-  const data = useRepoData(busy, showSettings || showRemoteForm || updater.modalOpen, setError, clearMessages);
+  const onCloneSuccessRef = useRef<(targetPath: string) => void>(() => {});
+  const clone = useClone((targetPath) => onCloneSuccessRef.current(targetPath));
+  const data = useRepoData(
+    busy,
+    showSettings || showRemoteForm || updater.modalOpen || clone.modalOpen,
+    setError,
+    clearMessages,
+  );
+  onCloneSuccessRef.current = (targetPath: string) => {
+    data.addAdHocRepo(targetPath);
+    const parent = parentDirOf(targetPath);
+    if (parent) {
+      data.setConfig((prev) => ({ ...prev, last_clone_dir: parent }));
+    }
+  };
   const flow = useIntegrationFlow({
     selectedRepo: data.selectedRepo, status: data.status, selectedRemote: data.selectedRemote,
     mergeTarget: data.mergeTarget, busy, setBusy, setNotice, setError,
@@ -108,7 +130,9 @@ export default function App() {
         busy={busy}
         updateVersion={updater.availableVersion}
         updateInProgress={updater.isInstalling}
+        cloneInProgress={Boolean(clone.status?.in_progress)}
         onOpenUpdateModal={updater.openModal}
+        onToggleCloneModal={() => (clone.modalOpen ? clone.closeModal() : clone.openModal())}
         onSelectRepo={(val) => { data.setAutoMatched(false); data.setSelectedRepo(val); }}
         onRefresh={() => void data.refreshRepoData(selectedRepo)}
         onToggleSettings={() => setShowSettings((v) => !v)}
@@ -117,79 +141,53 @@ export default function App() {
         onSwitchTab={(t) => { data.setTab(t); if (t === 'diff') void data.refreshRepoData(selectedRepo); }}
       />
 
-      {updater.modalOpen && updater.checkInfo && (
-        <UpdateModal
-          info={updater.checkInfo}
-          status={updater.status}
-          installing={updater.isInstalling}
-          restartTimedOut={updater.restartTimedOut}
-          reloadSuggested={updater.reloadSuggested}
-          onInstall={() => void updater.startInstall()}
-          onClose={updater.closeModal}
-        />
-      )}
-
-      {showSettings && (
-        <SettingsPanel
-          config={data.config}
-          busy={busy}
-          currentVersion={updater.currentVersion}
-          updateInfo={updater.checkInfo}
-          checkingUpdates={updater.checking}
-          updateCheckError={updater.manualError}
-          onCheckUpdates={() => void updater.checkForUpdates()}
-          onOpenUpdateModal={() => { setShowSettings(false); updater.openModal(); }}
-          onClose={() => setShowSettings(false)}
-          onInitRepo={async (path) => {
-            if (!(await flow.runSimple(() => api.initRepo(path)))) return false;
-            const res = await api.getRepos();
+      <AppModals
+        updater={updater}
+        clone={clone}
+        showSettings={showSettings}
+        showRemoteForm={showRemoteForm}
+        selectedRepo={selectedRepo}
+        repos={data.repos}
+        config={data.config}
+        busy={busy}
+        onCloseSettings={() => setShowSettings(false)}
+        onOpenUpdateFromSettings={() => { setShowSettings(false); updater.openModal(); }}
+        onCloseRemote={() => setShowRemoteForm(false)}
+        onError={setError}
+        onInitRepo={async (path) => {
+          if (!(await flow.runSimple(() => api.initRepo(path)))) return false;
+          const res = await api.getRepos();
+          data.setRepos(res.repos);
+          data.setSelectedRepo(path);
+          setShowSettings(false);
+          return true;
+        }}
+        onSaveConfig={async (cfg) => {
+          setBusy(true);
+          try {
+            const prevRepo = data.config.update_repo ?? null;
+            const res = await api.saveConfig(cfg);
             data.setRepos(res.repos);
-            data.setSelectedRepo(path);
+            data.setConfig(res.config);
             setShowSettings(false);
-            return true;
-          }}
-          onSave={async (cfg) => {
-            setBusy(true);
-            try {
-              const prevRepo = data.config.update_repo ?? null;
-              const res = await api.saveConfig(cfg);
-              data.setRepos(res.repos);
-              data.setConfig(res.config);
-              setShowSettings(false);
-              if (prevRepo !== (res.config.update_repo ?? null)) {
-                void updater.checkForUpdates();
-              }
-            } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
-          }}
-        />
-      )}
-
-      {showRemoteForm && selectedRepo && (
-        <RemoteModal
-          defaultRepoName={
-            data.repos.find((r) => r.path.toLowerCase() === selectedRepo.toLowerCase())?.name ??
-            selectedRepo.split(/[\\/]/).pop() ?? 'new-repo'
+            if (prevRepo !== (res.config.update_repo ?? null)) void updater.checkForUpdates();
+          } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+        }}
+        onAuthChanged={async () => { data.setConfig((await api.getRepos()).config); }}
+        onAddExistingRemote={async (name, url) => {
+          if (await flow.runSimple(() => api.addRemote(selectedRepo, name, url))) setShowRemoteForm(false);
+        }}
+        onCreateGithubRemote={async (payload) => {
+          if (await flow.runSimple(() => api.createGithubRepo(selectedRepo, payload))) {
+            data.setConfig((await api.getRepos()).config);
+            setShowRemoteForm(false);
           }
-          hasSavedToken={Boolean(data.config.has_github_token)}
-          busy={busy}
-          onClose={() => setShowRemoteForm(false)}
-          onAuthChanged={async () => { data.setConfig((await api.getRepos()).config); }}
-          onError={setError}
-          onAddExisting={async (name, url) => {
-            if (await flow.runSimple(() => api.addRemote(selectedRepo, name, url))) setShowRemoteForm(false);
-          }}
-          onCreateGithub={async (payload) => {
-            if (await flow.runSimple(() => api.createGithubRepo(selectedRepo, payload))) {
-              data.setConfig((await api.getRepos()).config);
-              setShowRemoteForm(false);
-            }
-          }}
-        />
-      )}
+        }}
+      />
 
-      {IS_T3_HOST && !selectedRepo && !showSettings && (
+      {IS_T3_HOST && !selectedRepo && !showSettings && !clone.modalOpen && (
         <div className="gw-card gw-muted" style={{ textAlign: 'center', padding: 16 }}>
-          Откройте тред в T3 Code, чтобы синхронизировать репозиторий.
+          Open a thread in T3 Code to sync a repository.
         </div>
       )}
 

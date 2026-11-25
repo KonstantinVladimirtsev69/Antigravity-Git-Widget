@@ -31,7 +31,12 @@ use git_routes::{
 };
 use git_widget_sidecar::{
     cli::{parse_cli_args, CliMode},
-    config, routes, self_update, t3_installer, update_routes,
+    clone_routes::{
+        cancel_clone_handler, clone_status_handler, start_clone_handler, CloneManager,
+    },
+    config,
+    fs_routes::{open_explorer_handler, pick_folder_handler},
+    routes, self_update, t3_installer, update_routes,
 };
 use github_routes::{
     create_github_repo_handler, oauth_logout_handler, oauth_poll_handler, oauth_start_handler,
@@ -107,12 +112,18 @@ async fn run_server(port: u16, port_file: Option<PathBuf>, is_serve_mode: bool) 
         serve_port: if is_serve_mode { Some(addr.port()) } else { None },
         port_file: port_file.clone(),
         update: Arc::new(UpdateManager::new()),
+        clone: Arc::new(CloneManager::new()),
     });
 
     let app = Router::new()
         .route("/api/repos", get(get_repos))
         .route("/api/config", post(post_config))
         .route("/api/config/integration-mode", post(save_integration_mode_handler))
+        .route("/api/clone", post(start_clone_handler))
+        .route("/api/clone/status", get(clone_status_handler))
+        .route("/api/clone/cancel", post(cancel_clone_handler))
+        .route("/api/fs/pick-folder", post(pick_folder_handler))
+        .route("/api/fs/open-explorer", post(open_explorer_handler))
         .route("/api/update/check", get(check_update_handler))
         .route("/api/update/status", get(update_status_handler))
         .route("/api/update/install", post(install_update_handler))

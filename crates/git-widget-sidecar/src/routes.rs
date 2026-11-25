@@ -1,6 +1,7 @@
 //! Core HTTP state, auth, config, workspace resolution, and status route handlers.
 
 use crate::{
+    clone_routes::CloneManager,
     config::{load_config, save_config},
     update_routes::UpdateManager,
 };
@@ -32,6 +33,7 @@ pub struct AppState {
     pub serve_port: Option<u16>,
     pub port_file: Option<PathBuf>,
     pub update: Arc<UpdateManager>,
+    pub clone: Arc<CloneManager>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +43,7 @@ pub struct PublicScannerConfig {
     pub integration_mode: IntegrationMode,
     pub has_github_token: bool,
     pub update_repo: Option<String>,
+    pub last_clone_dir: Option<String>,
 }
 
 impl From<&ScannerConfig> for PublicScannerConfig {
@@ -51,6 +54,7 @@ impl From<&ScannerConfig> for PublicScannerConfig {
             integration_mode: cfg.integration_mode,
             has_github_token: cfg.github_token.as_ref().is_some_and(|t| !t.trim().is_empty()),
             update_repo: cfg.update_repo.clone(),
+            last_clone_dir: cfg.last_clone_dir.clone(),
         }
     }
 }
@@ -116,6 +120,11 @@ pub fn merge_config_preserving_token(existing: &ScannerConfig, mut incoming: Sca
         .update_repo
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+    let next_clone_dir = incoming
+        .last_clone_dir
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    incoming.last_clone_dir = next_clone_dir.or_else(|| existing.last_clone_dir.clone());
     incoming
 }
 
@@ -228,6 +237,7 @@ mod tests {
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Rebase,
             update_repo: None,
+            last_clone_dir: None,
         };
         let pub_cfg = PublicScannerConfig::from(&secret);
         let serialized = serde_json::to_string(&pub_cfg).unwrap();
@@ -241,6 +251,7 @@ mod tests {
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Squash,
             update_repo: None,
+            last_clone_dir: None,
         };
         let merged = merge_config_preserving_token(&secret, incoming);
         assert_eq!(merged.github_token.as_deref(), Some("ghp_super_secret"));

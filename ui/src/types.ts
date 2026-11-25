@@ -35,6 +35,46 @@ export interface ScannerConfig {
   has_github_token?: boolean;
   integration_mode?: IntegrationMode;
   update_repo?: string | null;
+  last_clone_dir?: string | null;
+}
+
+export type CloneStage =
+  | 'idle'
+  | 'starting'
+  | 'counting'
+  | 'compressing'
+  | 'receiving'
+  | 'resolving'
+  | 'updating'
+  | 'done'
+  | 'cancelled'
+  | 'error';
+
+export interface CloneStatusResponse {
+  stage: CloneStage;
+  percent: number;
+  phase_label: string;
+  target_path: string | null;
+  sanitized_url: string | null;
+  in_progress: boolean;
+  error: string | null;
+  log_tail: string[];
+}
+
+export interface StartCloneRequest {
+  url: string;
+  parent_dir: string;
+  folder_name?: string;
+}
+
+export interface PickFolderResponse {
+  path: string | null;
+  cancelled: boolean;
+}
+
+export interface AddProjectResult {
+  status: 'added' | 'already_exists' | 'fallback' | 'error';
+  message: string;
 }
 
 export type UpdateStage =

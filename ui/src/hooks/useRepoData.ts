@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import {
+  loadAdHocRepos,
+  mergeRepoOptions,
+  normalizeWinPath,
+  saveAdHocRepos,
+} from '../utils/repoOptions';
 import type {
   CommitInfo,
   DiffFile,
@@ -46,6 +52,7 @@ export function useRepoData(
 ) {
   const [tab, setTab] = useState<'flow' | 'diff'>('flow');
   const [repos, setRepos] = useState<RepoInfo[]>([]);
+  const [adHocRepos, setAdHocRepos] = useState<RepoInfo[]>(() => loadAdHocRepos());
   const [config, setConfig] = useState<ScannerConfig>({ roots: ['C:\\Projects\\'], max_depth: 3 });
   const [selectedRepo, setSelectedRepo] = useState<string>('');
   const [autoMatched, setAutoMatched] = useState<boolean>(false);
@@ -191,14 +198,23 @@ export function useRepoData(
     };
   }, [selectedRepo, selectedRemote]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const addAdHocRepo = useCallback((repoPath: string) => {
+    const trimmed = repoPath.trim().replace(/[\\/]+$/, '');
+    const norm = normalizeWinPath(trimmed);
+    if (!norm) return;
+    const segs = trimmed.split(/[\\/]/);
+    const name = segs[segs.length - 1] || trimmed;
+    setAdHocRepos((prev) => {
+      if (prev.some((r) => normalizeWinPath(r.path) === norm)) return prev;
+      const next = [...prev, { name, path: trimmed, is_worktree: false }];
+      saveAdHocRepos(next);
+      return next;
+    });
+  }, []);
+
   const repoOptions = useMemo(
-    () =>
-      repos.map((r) => ({
-        value: r.path,
-        label: `${r.name}${r.is_worktree ? ' (wt)' : ''}`,
-        sub: r.path,
-      })),
-    [repos],
+    () => mergeRepoOptions(repos, adHocRepos),
+    [repos, adHocRepos],
   );
 
   return {
@@ -206,6 +222,7 @@ export function useRepoData(
     setTab,
     repos,
     setRepos,
+    addAdHocRepo,
     config,
     setConfig,
     selectedRepo,

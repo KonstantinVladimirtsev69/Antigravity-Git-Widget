@@ -14,7 +14,9 @@ interface HeaderBarProps {
   busy: boolean;
   updateVersion?: string | null;
   updateInProgress?: boolean;
+  cloneInProgress?: boolean;
   onOpenUpdateModal?: () => void;
+  onToggleCloneModal?: () => void;
   onSelectRepo: (val: string) => void;
   onRefresh: () => void;
   onToggleSettings: () => void;
@@ -34,7 +36,9 @@ export function HeaderBar({
   busy,
   updateVersion,
   updateInProgress = false,
+  cloneInProgress = false,
   onOpenUpdateModal,
+  onToggleCloneModal,
   onSelectRepo,
   onRefresh,
   onToggleSettings,
@@ -63,6 +67,16 @@ export function HeaderBar({
             title={badgeVersion ? `Update to v${badgeVersion}` : 'Updating widget'}
           >
             {updateInProgress ? 'Updating...' : `Update v${badgeVersion}`}
+          </button>
+        )}
+        {onToggleCloneModal && (
+          <button
+            type="button"
+            className={`gw-btn${cloneInProgress ? ' gw-btn-primary' : ''}`}
+            onClick={onToggleCloneModal}
+            title="Clone repository"
+          >
+            {cloneInProgress ? 'Cloning...' : 'Clone'}
           </button>
         )}
         <button className="gw-btn" onClick={onRefresh} disabled={busy}>

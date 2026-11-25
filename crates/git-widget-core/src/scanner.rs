@@ -38,6 +38,8 @@ pub struct ScannerConfig {
     pub integration_mode: IntegrationMode,
     #[serde(default)]
     pub update_repo: Option<String>,
+    #[serde(default)]
+    pub last_clone_dir: Option<String>,
 }
 
 impl Default for ScannerConfig {
@@ -49,6 +51,7 @@ impl Default for ScannerConfig {
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::default(),
             update_repo: None,
+            last_clone_dir: None,
         }
     }
 }

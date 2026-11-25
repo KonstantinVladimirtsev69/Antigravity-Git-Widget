@@ -4,6 +4,7 @@ use axum::{
 };
 use git_widget_core::{integrate::IntegrationMode, scanner::ScannerConfig};
 use git_widget_sidecar::{
+    clone_routes::CloneManager,
     routes::{get_repos, merge_config_preserving_token, post_config, AppState, PublicScannerConfig},
     update_routes::{
         check_update_handler, install_update_handler, update_status_handler, UpdateCheckResponse,
@@ -173,10 +174,12 @@ fn make_state(
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Merge,
             update_repo: update_repo.map(ToString::to_string),
+            last_clone_dir: None,
         })),
         serve_port: Some(41234),
         port_file: None,
         update: Arc::new(update_mgr),
+        clone: Arc::new(CloneManager::new_for_tests()),
     })
 }
 
@@ -481,6 +484,7 @@ async fn config_validates_resets_update_repo_and_invalidates_update_cache() {
         github_oauth_client_id: None,
         integration_mode: IntegrationMode::Merge,
         update_repo: Some("owner/custom".into()),
+        last_clone_dir: None,
     };
     let pub_cfg = PublicScannerConfig::from(&base_cfg);
     assert_eq!(pub_cfg.update_repo.as_deref(), Some("owner/custom"));
@@ -498,6 +502,7 @@ async fn config_validates_resets_update_repo_and_invalidates_update_cache() {
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Merge,
             update_repo: Some("   ".into()),
+            last_clone_dir: None,
         },
     );
     assert_eq!(cleared.github_token.as_deref(), Some("ghp_keep_me"));
