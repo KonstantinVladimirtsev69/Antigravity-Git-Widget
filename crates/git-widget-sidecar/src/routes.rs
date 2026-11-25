@@ -1,6 +1,7 @@
 //! Core HTTP state, auth, config, workspace resolution, and status route handlers.
 
 use crate::{
+    clone_routes::CloneManager,
     config::{load_config, save_config},
     update_routes::UpdateManager,
 };
@@ -32,6 +33,7 @@ pub struct AppState {
     pub serve_port: Option<u16>,
     pub port_file: Option<PathBuf>,
     pub update: Arc<UpdateManager>,
+    pub clone: Arc<CloneManager>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +230,7 @@ mod tests {
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Rebase,
             update_repo: None,
+            last_clone_dir: None,
         };
         let pub_cfg = PublicScannerConfig::from(&secret);
         let serialized = serde_json::to_string(&pub_cfg).unwrap();
@@ -241,6 +244,7 @@ mod tests {
             github_oauth_client_id: None,
             integration_mode: IntegrationMode::Squash,
             update_repo: None,
+            last_clone_dir: None,
         };
         let merged = merge_config_preserving_token(&secret, incoming);
         assert_eq!(merged.github_token.as_deref(), Some("ghp_super_secret"));
