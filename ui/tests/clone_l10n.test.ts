@@ -67,3 +67,15 @@ test('folder_picker uses layered non-topmost owner and restores host focus befor
   const dropOwnerIdx = picker.indexOf('drop(owner_guard)');
   assert.ok(restoreIdx > 0 && dropOwnerIdx > restoreIdx, 'Must restore host_fg before dropping owner_guard');
 });
+
+test('App.tsx does not auto-switch selectedRepo on clone completion', () => {
+  const app = readRel('ui/src/App.tsx');
+  const start = app.indexOf('onCloneSuccessRef.current =');
+  assert.ok(start > 0, 'Expected onCloneSuccessRef.current assignment');
+  const block = app.slice(start, start + 350);
+  assert.equal(
+    block.includes('setSelectedRepo('),
+    false,
+    'onCloneSuccess must not switch selectedRepo independently of the host shell',
+  );
+});

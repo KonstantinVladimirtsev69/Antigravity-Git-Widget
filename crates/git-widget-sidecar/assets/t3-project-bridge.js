@@ -99,16 +99,6 @@
         );
       }
     };
-    const notifyWorkspace = () => {
-      if (iframeEl && iframeEl.contentWindow) {
-        try {
-          iframeEl.contentWindow.postMessage(
-            { type: 'workspace-change', payload: { workspaceUris: [path] } },
-            IFRAME_ORIGIN
-          );
-        } catch (_) {}
-      }
-    };
     if (!path) return reply('error', 'Empty repository path');
     try {
       const ctx = await resolveT3HttpContext();
@@ -139,7 +129,6 @@
             throw new Error(`HTTP ${mut.status}`);
           }
         }
-        notifyWorkspace();
         showToast('Project already exists in T3 Code');
         return reply('already_exists', 'Project already registered in T3 Code');
       }
@@ -158,7 +147,6 @@
       if (!createRes.ok) {
         const txt = await createRes.text().catch(() => '');
         if (txt.includes('ProjectWorkspaceConflictError')) {
-          notifyWorkspace();
           showToast('Project already exists in T3 Code');
           return reply('already_exists', 'Project already registered in T3 Code');
         }
@@ -167,7 +155,6 @@
         }
         throw new Error(`HTTP ${createRes.status}`);
       }
-      notifyWorkspace();
       showToast('Project added to T3 Code');
       return reply('added', 'Project added to T3 Code');
     } catch (err) {

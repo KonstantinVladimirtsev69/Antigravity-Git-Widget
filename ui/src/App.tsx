@@ -54,8 +54,6 @@ export default function App() {
   );
   onCloneSuccessRef.current = (targetPath: string) => {
     data.addAdHocRepo(targetPath);
-    data.setAutoMatched(false);
-    data.setSelectedRepo(targetPath);
     const parent = parentDirOf(targetPath);
     if (parent) {
       data.setConfig((prev) => ({ ...prev, last_clone_dir: parent }));

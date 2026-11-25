@@ -66,9 +66,8 @@ fn render_ui_bridge_js_embeds_project_bridge_without_stale_placeholders() {
         "handleAddProjectToT3 must NEVER call syncWorkspace(true) (can wipe selectedRepo)"
     );
     assert!(
-        add_fn_body.contains("workspace-change")
-            && add_fn_body.contains("iframeEl.contentWindow.postMessage"),
-        "handleAddProjectToT3 must post workspace-change directly to iframeEl.contentWindow"
+        !add_fn_body.contains("workspace-change"),
+        "handleAddProjectToT3 must not forge workspace-change; host shell controls repo switching"
     );
 }
 

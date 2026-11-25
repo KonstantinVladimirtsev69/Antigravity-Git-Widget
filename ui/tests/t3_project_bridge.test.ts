@@ -126,6 +126,14 @@ test('Add to T3 Code uses desktopBridge httpBaseUrl and Bearer token on T3 Code 
     (m) => (m as { type?: string }).type === 'git-widget-add-project-result',
   ) as { status?: string } | undefined;
   assert.equal(reply?.status, 'added');
+  const fakeWorkspaceMsg = ctx.postedToIframe.find(
+    (m) => (m as { type?: string }).type === 'workspace-change',
+  );
+  assert.equal(
+    fakeWorkspaceMsg,
+    undefined,
+    'Add to T3 Code must not forge workspace-change; host shell owns active repo switching',
+  );
 });
 
 test('Add to T3 Code ignores soft-deleted projects and uses relative same-origin on web', async () => {
