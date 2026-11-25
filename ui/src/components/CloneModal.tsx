@@ -151,21 +151,21 @@ export function CloneModal({
       {!donePath && (
         <>
           <div className="gw-stack" style={{ gap: 4 }}>
-            <label className="gw-muted" htmlFor="gw-clone-url">URL или owner/repo</label>
-            <input id="gw-clone-url" className="gw-input" value={url} disabled={inProgress} onChange={(e) => handleUrlChange(e.target.value)} placeholder="https://github.com/owner/repo.git или owner/repo" />
+            <label className="gw-muted" htmlFor="gw-clone-url">Repository URL or owner/repo</label>
+            <input id="gw-clone-url" className="gw-input" value={url} disabled={inProgress} onChange={(e) => handleUrlChange(e.target.value)} placeholder="https://github.com/owner/repo.git or owner/repo" />
             {showUrlPreview && <div className="gw-muted" style={{ wordBreak: 'break-all' }}>→ {expandedPreview}</div>}
           </div>
           <div className="gw-stack" style={{ gap: 4 }}>
-            <label className="gw-muted" htmlFor="gw-clone-parent">Родительская папка</label>
+            <label className="gw-muted" htmlFor="gw-clone-parent">Parent folder</label>
             <div className="gw-row">
               <input id="gw-clone-parent" className="gw-input" value={parentDir} disabled={inProgress} onChange={(e) => { setParentDir(e.target.value); setParentEdited(true); if (formError) onClearError(); }} placeholder="C:\Projects" />
-              <button type="button" className="gw-btn" disabled={inProgress || pickingFolder} onClick={() => void handlePickFolder()}>{pickingFolder ? '...' : 'Обзор…'}</button>
+              <button type="button" className="gw-btn" disabled={inProgress || pickingFolder} onClick={() => void handlePickFolder()}>{pickingFolder ? '...' : 'Browse…'}</button>
             </div>
           </div>
           <div className="gw-stack" style={{ gap: 4 }}>
-            <label className="gw-muted" htmlFor="gw-clone-folder">Имя подпапки</label>
-            <input id="gw-clone-folder" className="gw-input" value={folderName} disabled={inProgress} onChange={(e) => handleFolderChange(e.target.value)} placeholder="my-repo" />
-            {parentDir.trim() && folderName.trim() && <div className="gw-muted" style={{ wordBreak: 'break-all' }}>Путь: {joinPreviewPath(parentDir, folderName)}</div>}
+            <label className="gw-muted" htmlFor="gw-clone-folder">Folder name (auto-filled from URL)</label>
+            <input id="gw-clone-folder" className="gw-input" value={folderName} disabled={inProgress} onChange={(e) => handleFolderChange(e.target.value)} placeholder="Auto-filled from URL or enter custom name" />
+            {parentDir.trim() && folderName.trim() && <div className="gw-muted" style={{ wordBreak: 'break-all' }}>Target: {joinPreviewPath(parentDir, folderName)}</div>}
           </div>
         </>
       )}
@@ -175,20 +175,20 @@ export function CloneModal({
 
       {donePath ? (
         <div className="gw-stack" style={{ gap: 6 }}>
-          <div className="gw-muted" style={{ wordBreak: 'break-all' }}>Склонировано: {donePath}</div>
+          <div className="gw-muted" style={{ wordBreak: 'break-all' }}>Cloned: {donePath}</div>
           <div className="gw-row" style={{ flexWrap: 'wrap' }}>
-            <button type="button" className="gw-btn" onClick={() => void handleOpenExplorer(donePath)}>Открыть в Проводнике</button>
-            <button type="button" className="gw-btn" onClick={() => void handleCopyPath(donePath)}>{copied ? 'Скопировано' : 'Скопировать путь'}</button>
+            <button type="button" className="gw-btn" onClick={() => void handleOpenExplorer(donePath)}>Open in Explorer</button>
+            <button type="button" className="gw-btn" onClick={() => void handleCopyPath(donePath)}>{copied ? 'Copied' : 'Copy Path'}</button>
             {IS_T3_HOST && (
               <button type="button" className="gw-btn gw-btn-primary" disabled={addingToT3} onClick={() => void handleAddToT3(donePath)}>
-                {addingToT3 ? 'Добавление...' : 'Добавить проект в T3 Code'}
+                {addingToT3 ? 'Adding...' : 'Add to T3 Code'}
               </button>
             )}
           </div>
           {t3Result && <div style={{ color: t3Color, fontSize: 11, wordBreak: 'break-word' }}>{t3Result.message || t3Result.status}</div>}
           <div className="gw-row">
-            <button type="button" className="gw-btn" style={{ flex: 1 }} onClick={handleReset}>Клонировать ещё</button>
-            <button type="button" className="gw-btn" onClick={onClose}>Закрыть</button>
+            <button type="button" className="gw-btn" style={{ flex: 1 }} onClick={handleReset}>Clone another</button>
+            <button type="button" className="gw-btn" onClick={onClose}>Close</button>
           </div>
         </div>
       ) : (

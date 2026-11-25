@@ -253,14 +253,14 @@ __GW_PROJECT_BRIDGE_JS__
     fallbackBtn.addEventListener('click', () => setDrawerOpen(!drawerOpen));
 
     drawerEl = document.createElement('aside'); drawerEl.id = 'gw-t3-drawer';
-    const resizer = document.createElement('div'); resizer.id = 'gw-t3-resizer'; resizer.title = 'Изменить ширину';
+    const resizer = document.createElement('div'); resizer.id = 'gw-t3-resizer'; resizer.title = 'Resize panel';
     bindResizer(resizer);
 
     const hdr = document.createElement('div'); hdr.id = 'gw-t3-drawer-hdr';
     const title = document.createElement('span'); title.textContent = 'Git Widget';
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button'; closeBtn.id = 'gw-t3-drawer-close';
-    closeBtn.textContent = '×'; closeBtn.title = 'Закрыть Git Widget (Esc)';
+    closeBtn.textContent = '×'; closeBtn.title = 'Close Git Widget (Esc)';
     closeBtn.addEventListener('click', () => setDrawerOpen(false));
     hdr.append(title, closeBtn);
 

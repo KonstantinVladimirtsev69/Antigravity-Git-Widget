@@ -1,6 +1,22 @@
 //! Native Win32 COM STA folder picker dialog (`IFileOpenDialog`).
 
 #[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(windows)]
+#[derive(Default)]
+struct FocusRaiseOnce {
+    done: AtomicBool,
+}
+
+#[cfg(windows)]
+impl FocusRaiseOnce {
+    fn try_claim(&self) -> bool {
+        !self.done.swap(true, Ordering::SeqCst)
+    }
+}
+
+#[cfg(windows)]
 pub async fn pick_folder(initial_dir: Option<String>) -> Result<Option<String>, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
@@ -14,20 +30,28 @@ pub async fn pick_folder(initial_dir: Option<String>) -> Result<Option<String>, 
 #[cfg(windows)]
 fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> {
     use windows::{
-        core::{w, HSTRING},
+        core::{implement, Interface, Ref, Result as WinResult, HSTRING},
         Win32::{
             Foundation::{ERROR_CANCELLED, HWND},
-            System::Com::{
-                CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
-                COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+            System::{
+                Com::{
+                    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
+                    COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+                },
+                Ole::IOleWindow,
+                Threading::{AttachThreadInput, GetCurrentThreadId},
             },
             UI::{
                 Shell::{
-                    FileOpenDialog, IFileOpenDialog, IShellItem, SHCreateItemFromParsingName,
+                    FileOpenDialog, IFileDialog, IFileDialogEvents, IFileDialogEvents_Impl,
+                    IFileOpenDialog, IShellItem, SHCreateItemFromParsingName, FDEOR_DEFAULT,
+                    FDESVR_DEFAULT, FDE_OVERWRITE_RESPONSE, FDE_SHAREVIOLATION_RESPONSE,
                     FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
                 },
                 WindowsAndMessaging::{
-                    CreateWindowExW, DestroyWindow, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+                    BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
+                    IsWindowVisible, SetForegroundWindow, SetWindowPos, HWND_NOTOPMOST,
+                    HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
                 },
             },
         },
@@ -42,12 +66,105 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
         }
     }
 
-    struct OwnerGuard(HWND);
-    impl Drop for OwnerGuard {
-        fn drop(&mut self) {
+    #[implement(IFileDialogEvents)]
+    struct PickerEvents {
+        once: FocusRaiseOnce,
+    }
+
+    impl PickerEvents {
+        fn raise_once(&self, pfd: &Ref<IFileDialog>) {
+            let Some(dlg) = pfd.as_ref() else {
+                return;
+            };
             unsafe {
-                let _ = DestroyWindow(self.0);
+                let Ok(ole) = dlg.cast::<IOleWindow>() else {
+                    return;
+                };
+                let Ok(dlg_hwnd) = ole.GetWindow() else {
+                    return;
+                };
+                if dlg_hwnd.0.is_null() || !IsWindowVisible(dlg_hwnd).as_bool() {
+                    return;
+                }
+                if !self.once.try_claim() {
+                    return;
+                }
+                bring_to_foreground_once(dlg_hwnd);
             }
+        }
+    }
+
+    impl IFileDialogEvents_Impl for PickerEvents_Impl {
+        fn OnFileOk(&self, _pfd: Ref<IFileDialog>) -> WinResult<()> {
+            Ok(())
+        }
+        fn OnFolderChanging(
+            &self,
+            _pfd: Ref<IFileDialog>,
+            _psifolder: Ref<IShellItem>,
+        ) -> WinResult<()> {
+            Ok(())
+        }
+        fn OnFolderChange(&self, pfd: Ref<IFileDialog>) -> WinResult<()> {
+            self.raise_once(&pfd);
+            Ok(())
+        }
+        fn OnSelectionChange(&self, pfd: Ref<IFileDialog>) -> WinResult<()> {
+            self.raise_once(&pfd);
+            Ok(())
+        }
+        fn OnShareViolation(
+            &self,
+            _pfd: Ref<IFileDialog>,
+            _psi: Ref<IShellItem>,
+        ) -> WinResult<FDE_SHAREVIOLATION_RESPONSE> {
+            Ok(FDESVR_DEFAULT)
+        }
+        fn OnTypeChange(&self, _pfd: Ref<IFileDialog>) -> WinResult<()> {
+            Ok(())
+        }
+        fn OnOverwrite(
+            &self,
+            _pfd: Ref<IFileDialog>,
+            _psi: Ref<IShellItem>,
+        ) -> WinResult<FDE_OVERWRITE_RESPONSE> {
+            Ok(FDEOR_DEFAULT)
+        }
+    }
+
+    unsafe fn bring_to_foreground_once(hwnd: HWND) {
+        let cur_fg = GetForegroundWindow();
+        let cur_tid = GetCurrentThreadId();
+        let fg_tid = if !cur_fg.0.is_null() {
+            GetWindowThreadProcessId(cur_fg, None)
+        } else {
+            0
+        };
+        let attached = fg_tid != 0
+            && fg_tid != cur_tid
+            && AttachThreadInput(cur_tid, fg_tid, true).as_bool();
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE,
+        );
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_NOTOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE,
+        );
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+        if attached {
+            let _ = AttachThreadInput(cur_tid, fg_tid, false);
         }
     }
 
@@ -57,23 +174,7 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
             .map_err(|e| format!("COM initialization failed: {e}"))?;
         let _com = ComGuard;
 
-        let owner = CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-            w!("STATIC"),
-            w!(""),
-            WS_POPUP,
-            0,
-            0,
-            0,
-            0,
-            None,
-            None,
-            None,
-            None,
-        )
-        .map_err(|e| format!("Failed creating picker owner window: {e}"))?;
-        let _owner_guard = OwnerGuard(owner);
-
+        let host_fg = GetForegroundWindow();
         let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed creating IFileOpenDialog: {e}"))?;
 
@@ -91,7 +192,21 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
             }
         }
 
-        match dialog.Show(Some(owner)) {
+        let events: IFileDialogEvents = PickerEvents {
+            once: FocusRaiseOnce::default(),
+        }
+        .into();
+        let cookie = dialog.Advise(&events).ok();
+        let show_res = dialog.Show(None);
+        if let Some(c) = cookie {
+            let _ = dialog.Unadvise(c);
+        }
+
+        if !host_fg.0.is_null() && IsWindow(Some(host_fg)).as_bool() {
+            let _ = SetForegroundWindow(host_fg);
+        }
+
+        match show_res {
             Ok(()) => {}
             Err(err) if err.code() == ERROR_CANCELLED.to_hresult() => return Ok(None),
             Err(err) => return Err(format!("Folder dialog failed: {err}")),
@@ -114,4 +229,17 @@ fn pick_folder_sta(initial_dir: Option<&str>) -> Result<Option<String>, String> 
 #[cfg(not(windows))]
 pub async fn pick_folder(_initial_dir: Option<String>) -> Result<Option<String>, String> {
     Err("Native folder picker is only supported on Windows".to_string())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::FocusRaiseOnce;
+
+    #[test]
+    fn focus_raise_once_triggers_strictly_once() {
+        let guard = FocusRaiseOnce::default();
+        assert!(guard.try_claim());
+        assert!(!guard.try_claim());
+        assert!(!guard.try_claim());
+    }
 }

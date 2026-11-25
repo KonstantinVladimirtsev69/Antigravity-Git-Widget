@@ -40,7 +40,7 @@ export function CloneProgress({ status, cancelling, onCancel }: CloneProgressPro
       <div className="gw-between">
         {status.log_tail.length > 0 ? (
           <button type="button" className="gw-btn gw-btn-xs" onClick={() => setShowLog((v) => !v)}>
-            {showLog ? '▾' : '▸'} Лог ({status.log_tail.length})
+            {showLog ? '▾' : '▸'} Log ({status.log_tail.length})
           </button>
         ) : (
           <span />

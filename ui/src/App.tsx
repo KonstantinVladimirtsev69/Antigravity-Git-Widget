@@ -189,7 +189,7 @@ export default function App() {
 
       {IS_T3_HOST && !selectedRepo && !showSettings && !clone.modalOpen && (
         <div className="gw-card gw-muted" style={{ textAlign: 'center', padding: 16 }}>
-          Откройте тред в T3 Code, чтобы синхронизировать репозиторий.
+          Open a thread in T3 Code to sync a repository.
         </div>
       )}
 

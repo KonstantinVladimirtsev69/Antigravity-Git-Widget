@@ -106,7 +106,7 @@
           }
         }
         notifyWorkspace();
-        showToast('Проект уже есть в T3 Code');
+        showToast('Project already exists in T3 Code');
         return reply('already_exists', 'Project already registered in T3 Code');
       }
 
@@ -126,7 +126,7 @@
         const txt = await createRes.text().catch(() => '');
         if (txt.includes('ProjectWorkspaceConflictError')) {
           notifyWorkspace();
-          showToast('Проект уже есть в T3 Code');
+          showToast('Project already exists in T3 Code');
           return reply('already_exists', 'Project already registered in T3 Code');
         }
         if (createRes.status === 404 || createRes.status === 405 || createRes.status === 400) {
@@ -135,13 +135,13 @@
         throw new Error(`HTTP ${createRes.status}`);
       }
       notifyWorkspace();
-      showToast('Проект добавлен в T3 Code');
+      showToast('Project added to T3 Code');
       return reply('added', 'Project added to T3 Code');
     } catch (_) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(path).catch(() => {});
       }
-      showToast('Путь скопирован — добавьте папку в T3 Code вручную');
+      showToast('Path copied to clipboard — add project manually in T3 Code');
       return reply('fallback', 'Path copied to clipboard — add project manually in T3 Code');
     }
   }
@@ -158,10 +158,10 @@
     if (data.type !== 'git-widget-ask-ai') return;
     const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
     if (!prompt) return;
-    if (insertIntoComposer(prompt)) { showToast('Промпт вставлен в композер T3 Code'); return; }
+    if (insertIntoComposer(prompt)) { showToast('Prompt inserted into T3 Code composer'); return; }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(prompt)
-        .then(() => showToast('Композер недоступен — промпт скопирован в буфер обмена'))
-        .catch(() => showToast('Не удалось вставить или скопировать промпт'));
-    } else showToast('Композер недоступен');
+        .then(() => showToast('Composer unavailable — prompt copied to clipboard'))
+        .catch(() => showToast('Failed to insert or copy prompt'));
+    } else showToast('Composer unavailable');
   });
