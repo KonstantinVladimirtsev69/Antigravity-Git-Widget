@@ -225,56 +225,7 @@
     anchor.parentElement.appendChild(item);
   }
 
-  function findComposer() {
-    for (const sel of [
-      '[data-testid*="composer"] [contenteditable="true"]',
-      '[contenteditable="true"][role="textbox"]',
-      'textarea[placeholder*="Ask"], textarea[placeholder*="Message"], textarea[placeholder*="Спросите"]',
-      'form textarea:not([disabled])',
-      'textarea:not([disabled])',
-    ]) {
-      const el = document.querySelector(sel);
-      if (el && el.offsetParent !== null) return el;
-    }
-    return null;
-  }
-
-  function insertIntoComposer(prompt) {
-    const el = findComposer();
-    if (!el) return false;
-    try {
-      el.focus();
-      if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-        const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
-        const nextVal = el.value ? `${el.value}\n\n${prompt}` : prompt;
-        if (desc && desc.set) desc.set.call(el, nextVal); else el.value = nextVal;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        return true;
-      }
-      if (el.isContentEditable) {
-        if (!document.execCommand || !document.execCommand('insertText', false, prompt)) {
-          el.textContent = el.textContent ? `${el.textContent}\n\n${prompt}` : prompt;
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        return true;
-      }
-    } catch (_) {}
-    return false;
-  }
-
-  window.addEventListener('message', (event) => {
-    if (event.origin !== IFRAME_ORIGIN) return;
-    const data = event.data;
-    if (!data || data.type !== 'git-widget-ask-ai') return;
-    const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : '';
-    if (!prompt) return;
-    if (insertIntoComposer(prompt)) { showToast('Промпт вставлен в композер T3 Code'); return; }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(prompt)
-        .then(() => showToast('Композер недоступен — промпт скопирован в буфер обмена'))
-        .catch(() => showToast('Не удалось вставить или скопировать промпт'));
-    } else showToast('Композер недоступен');
-  });
+__GW_PROJECT_BRIDGE_JS__
 
   function setDrawerOpen(open) {
     drawerOpen = open;
