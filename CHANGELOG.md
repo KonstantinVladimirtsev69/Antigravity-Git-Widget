@@ -5,6 +5,13 @@ All notable changes to **Antigravity Git Widget** will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-11-27
+
+### Fixed
+- **T3 Code Update Auto-Repatch (`t3-loader.cjs`, `t3_watch`)**: Intercepts T3 Code's `before-quit-for-update` and pending-update exit events to spawn a detached `--ensure-t3-patched --watch-update` watcher that automatically repatches `resources/app.asar` when replaced by `t3code-updater` (never killing T3 Code; sends one Windows restart toast and waits for unlock if T3 Code re-locks `app.asar` first).
+- **Windows Task Scheduler (`t3_scheduler`)**: Scoped `New-ScheduledTaskTrigger -AtLogOn` to `-User $env:USERNAME` so non-admin registration succeeds without falling back to `schtasks`, preserving the logon trigger, battery-execution flags (`AllowStartIfOnBatteries`, `DontStopIfGoingOnBatteries`), and hidden execution limit.
+- **ASAR Backup & Startup Checks (`t3_asar`, `main`, `self_update`)**: Always refreshes `app.asar.bak` when patching an unpatched `app.asar` after a T3 Code update, runs a non-blocking `ensure_t3_patched` check on sidecar startup, and refreshes the scheduled task during `--self-update`.
+
 ## [0.3.1] - 2026-11-25
 
 ### Fixed
