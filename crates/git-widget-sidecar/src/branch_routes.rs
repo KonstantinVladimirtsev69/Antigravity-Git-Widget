@@ -11,7 +11,8 @@ use axum::{
 };
 use git_widget_core::{
     branches::{
-        checkout_remote_branch, cherry_pick, create_branch, delete_branch, undo_last_commit,
+        checkout_remote_branch_with_remote, cherry_pick, create_branch, delete_branch,
+        undo_last_commit,
     },
     ops::{discard_all, stage_all, unstage_all},
     stash::{list_stashes, stash_apply, stash_drop, stash_pop_at},
@@ -37,6 +38,8 @@ pub struct DeleteBranchBody {
 pub struct RemoteBranchBody {
     pub repo: String,
     pub remote_branch: String,
+    #[serde(default)]
+    pub remote: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -87,7 +90,13 @@ pub async fn checkout_remote_handler(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
-    match checkout_remote_branch(Path::new(&b.repo), &b.remote_branch).await {
+    match checkout_remote_branch_with_remote(
+        Path::new(&b.repo),
+        &b.remote_branch,
+        b.remote.as_deref(),
+    )
+    .await
+    {
         Ok(r) => Json(r).into_response(),
         Err(e) => map_err(e),
     }

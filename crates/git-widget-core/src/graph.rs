@@ -4,6 +4,8 @@ pub use crate::github_prs::{list_github_prs, PrListResponse, PullRequestInfo};
 use crate::{
     error::{CoreError, Result},
     git_cli::{run_git_raw, LOCAL_TIMEOUT_SECS},
+    remote_focus::{scoped_graph_remote_ref, split_remote_branch},
+    status::list_remotes,
     validation::{validate_git_arg, validate_ref_name},
 };
 use serde::{Deserialize, Serialize};
@@ -74,18 +76,23 @@ pub fn remote_to_github_url(remote_url: &str) -> Option<String> {
     None
 }
 
-pub async fn get_github_url(repo_path: &Path) -> Option<String> {
-    let out = run_git_raw(repo_path, &["remote", "get-url", "origin"], LOCAL_TIMEOUT_SECS)
-        .await
-        .ok()?;
+/// Resolves the GitHub web base URL for a specific `remote` (or `origin` then any remote when `None`).
+pub async fn get_github_url_for_remote(repo_path: &Path, remote: Option<&str>) -> Option<String> {
+    if let Some(r) = remote.map(str::trim).filter(|s| !s.is_empty()) {
+        let valid = validate_ref_name(r, "remote").ok()?;
+        let out = run_git_raw(repo_path, &["remote", "get-url", valid], LOCAL_TIMEOUT_SECS)
+            .await
+            .ok()?;
+        return if out.success { remote_to_github_url(&out.stdout) } else { None };
+    }
+    let out = run_git_raw(repo_path, &["remote", "get-url", "origin"], LOCAL_TIMEOUT_SECS).await.ok()?;
     if out.success {
         if let Some(url) = remote_to_github_url(&out.stdout) {
             return Some(url);
         }
     }
-    let list = run_git_raw(repo_path, &["remote"], LOCAL_TIMEOUT_SECS).await.ok()?;
-    for name in list.stdout.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        if let Ok(u) = run_git_raw(repo_path, &["remote", "get-url", name], LOCAL_TIMEOUT_SECS).await {
+    for name in list_remotes(repo_path).await {
+        if let Ok(u) = run_git_raw(repo_path, &["remote", "get-url", &name], LOCAL_TIMEOUT_SECS).await {
             if u.success {
                 if let Some(url) = remote_to_github_url(&u.stdout) {
                     return Some(url);
@@ -96,21 +103,46 @@ pub async fn get_github_url(repo_path: &Path) -> Option<String> {
     None
 }
 
+pub async fn get_github_url(repo_path: &Path) -> Option<String> {
+    get_github_url_for_remote(repo_path, None).await
+}
+
 /// Loads commit graph with parent hashes, decorations, and full author statistics.
-/// Author filtering happens in Rust after collecting `authors` so the filter bar never loses chips.
 pub async fn get_commit_graph(
     repo_path: &Path,
     all_branches: bool,
     author_filter: Option<&str>,
     limit: usize,
 ) -> Result<GraphResponse> {
+    get_commit_graph_for_remote(repo_path, all_branches, author_filter, None, limit).await
+}
+
+/// Loads commit graph optionally scoped to a single `remote` without foreign remote decorations.
+pub async fn get_commit_graph_for_remote(
+    repo_path: &Path,
+    all_branches: bool,
+    author_filter: Option<&str>,
+    remote: Option<&str>,
+    limit: usize,
+) -> Result<GraphResponse> {
     let author_exact = match author_filter.map(str::trim).filter(|a| !a.is_empty()) {
         Some(a) => Some(validate_git_arg(a, "author filter")?.to_string()),
+        None => None,
+    };
+    let scoped_remote = match remote.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(r) => Some(validate_ref_name(r, "remote")?),
         None => None,
     };
 
     let fetch_limit = if author_exact.is_some() { limit.max(200) } else { limit };
     let limit_arg = format!("-n{fetch_limit}");
+    let remotes_flag = scoped_remote.map(|r| format!("--remotes={r}"));
+    let single_remote_ref = if all_branches {
+        None
+    } else {
+        scoped_graph_remote_ref(repo_path, scoped_remote).await
+    };
+
     let mut args: Vec<&str> = vec![
         "log",
         "--topo-order",
@@ -119,14 +151,17 @@ pub async fn get_commit_graph(
         "--format=%H%x1f%h%x1f%P%x1f%s%x1f%an%x1f%ae%x1f%cr%x1f%cd%x1f%D",
     ];
     if all_branches {
-        // Include branches, remotes, tags, and HEAD — avoid `--all` which pulls in
-        // tool-internal namespaces such as `refs/t3/orchestration-v2/checkpoints/*`.
-        args.extend(["--branches", "--remotes", "--tags", "HEAD"]);
+        // Avoid `--all` which pulls in internal namespaces like `refs/t3/orchestration-v2/checkpoints/*`.
+        args.extend(["--branches", "--tags", "HEAD"]);
+        args.push(remotes_flag.as_deref().unwrap_or("--remotes"));
+    } else if let Some(ref rem_ref) = single_remote_ref {
+        args.extend(["HEAD", rem_ref.as_str()]);
     }
 
-    let (log_res, github_url) = tokio::join!(
+    let (log_res, github_url, remotes) = tokio::join!(
         run_git_raw(repo_path, &args, LOCAL_TIMEOUT_SECS),
-        get_github_url(repo_path),
+        get_github_url_for_remote(repo_path, scoped_remote),
+        list_remotes(repo_path),
     );
     let out = log_res?;
 
@@ -143,7 +178,7 @@ pub async fn get_commit_graph(
             continue;
         }
         let parents = parts[2].split_whitespace().filter(|s| !s.is_empty()).map(ToString::to_string).collect();
-        let (refs, is_head) = parse_decorations(parts[8]);
+        let (refs, is_head) = parse_decorations(parts[8], &remotes, scoped_remote);
         let author_name = parts[4].to_string();
         let date_rel = parts[6].to_string();
 
@@ -180,7 +215,7 @@ pub async fn get_commit_graph(
     Ok(GraphResponse { commits, authors, github_url })
 }
 
-fn parse_decorations(raw: &str) -> (Vec<RefDecoration>, bool) {
+fn parse_decorations(raw: &str, remotes: &[String], scoped_remote: Option<&str>) -> (Vec<RefDecoration>, bool) {
     let mut refs = Vec::new();
     let mut is_head = false;
     for item in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -193,7 +228,10 @@ fn parse_decorations(raw: &str) -> (Vec<RefDecoration>, bool) {
             refs.push(RefDecoration { name: tag.trim().to_string(), kind: "tag".to_string() });
         } else if item.ends_with("/HEAD") {
             continue;
-        } else if item.contains('/') {
+        } else if let Some((rem, _)) = split_remote_branch(item, remotes) {
+            if scoped_remote.is_some_and(|target| rem != target) {
+                continue;
+            }
             refs.push(RefDecoration { name: item.to_string(), kind: "remote".to_string() });
         } else {
             refs.push(RefDecoration { name: item.to_string(), kind: "local".to_string() });

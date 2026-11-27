@@ -47,16 +47,30 @@ pub async fn delete_branch(repo_path: &Path, name: &str, force: bool) -> Result<
     })
 }
 
-/// Checks out a remote tracking branch (e.g. `origin/feat-x`) as a local tracking branch.
-pub async fn checkout_remote_branch(repo_path: &Path, remote_branch: &str) -> Result<OpResult> {
+/// Checks out a remote tracking branch (e.g. `origin/feat-x`) as a local tracking branch,
+/// optionally synchronizing upstream to `remote/<branch>` when `remote` is provided.
+pub async fn checkout_remote_branch_with_remote(
+    repo_path: &Path,
+    remote_branch: &str,
+    remote: Option<&str>,
+) -> Result<OpResult> {
     validate_ref(remote_branch, "remote branch")?;
     let trimmed = remote_branch.trim();
     let out = run_git(repo_path, &["checkout", "--track", trimmed], LOCAL_TIMEOUT_SECS).await?;
+    if let Some(r) = remote.map(str::trim).filter(|s| !s.is_empty()) {
+        let st = get_status(repo_path).await?;
+        crate::remote_focus::try_set_upstream_to(repo_path, r, &st.branch).await?;
+    }
     Ok(OpResult {
         success: true,
         message: format!("Tracking {trimmed}\n{}", out.stderr.trim()),
         has_conflicts: false,
     })
+}
+
+/// Checks out a remote tracking branch (e.g. `origin/feat-x`) as a local tracking branch.
+pub async fn checkout_remote_branch(repo_path: &Path, remote_branch: &str) -> Result<OpResult> {
+    checkout_remote_branch_with_remote(repo_path, remote_branch, None).await
 }
 
 /// Soft-resets HEAD~1 so the last commit's changes return to Staged Changes (VS Code Undo Last Commit).

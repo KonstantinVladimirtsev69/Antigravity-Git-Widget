@@ -4,7 +4,8 @@ use crate::{
     error::{CoreError, Result},
     git_cli::{run_git_raw, NETWORK_TIMEOUT_SECS},
     ops::{checkout_branch, fetch_remote, pull_remote, OpResult},
-    status::{get_status, BranchTracking, RepoStatus},
+    remote_focus::split_remote_branch,
+    status::{get_status_for_remote, BranchTracking, RepoStatus},
     validation::validate_ref_name,
 };
 use serde::{Deserialize, Serialize};
@@ -67,7 +68,7 @@ pub async fn scan_integration_sync(
         }
     }
 
-    let st = get_status(repo_path).await?;
+    let st = get_status_for_remote(repo_path, remote).await?;
     let source_state = state_from_tracking(&src, st.branch_tracking.get(&src));
     let target_state = state_from_tracking(&dst, st.branch_tracking.get(&dst));
     let any_behind = source_state.behind > 0 || target_state.behind > 0;
@@ -87,15 +88,23 @@ fn resolve_remote_and_branch<'a>(
     remotes: &'a [String],
     remote_branches: &'a [String],
 ) -> Option<(String, String)> {
-    if let Some(up) = tracking.and_then(|t| t.upstream.as_deref()) {
-        if let Some((r, rb)) = up.split_once('/') {
-            return Some((r.to_string(), rb.to_string()));
+    if let Some(r) = preferred_remote.map(str::trim).filter(|r| !r.is_empty()) {
+        if let Some(up) = tracking.and_then(|t| t.upstream.as_deref()) {
+            if let Some((up_r, rb)) = split_remote_branch(up, remotes) {
+                if up_r == r {
+                    return Some((up_r.to_string(), rb.to_string()));
+                }
+            }
         }
-    }
-    if let Some(r) = preferred_remote.filter(|r| !r.trim().is_empty()) {
         let candidate = format!("{r}/{branch}");
         if remote_branches.iter().any(|rb| rb == &candidate) {
             return Some((r.to_string(), branch.to_string()));
+        }
+        return None;
+    }
+    if let Some(up) = tracking.and_then(|t| t.upstream.as_deref()) {
+        if let Some((r, rb)) = split_remote_branch(up, remotes) {
+            return Some((r.to_string(), rb.to_string()));
         }
     }
     for r in remotes {
@@ -175,7 +184,7 @@ async fn pull_branch_with_status(
 /// Pulls a single branch (fast-forwarding non-current branches via refspec when `ahead == 0`).
 pub async fn pull_branch(repo_path: &Path, branch: &str, remote: Option<&str>) -> Result<OpResult> {
     let branch = validate_ref_name(branch, "branch")?;
-    let st = get_status(repo_path).await?;
+    let st = get_status_for_remote(repo_path, remote).await?;
     pull_branch_with_status(repo_path, branch, remote, &st).await
 }
 
@@ -196,7 +205,7 @@ pub async fn pull_both_branches(
         }
     }
 
-    let st = get_status(repo_path).await?;
+    let st = get_status_for_remote(repo_path, remote).await?;
     let src_behind = st.branch_tracking.get(&src).map(|t| t.behind).unwrap_or(0);
     let dst_behind = st.branch_tracking.get(&dst).map(|t| t.behind).unwrap_or(0);
 

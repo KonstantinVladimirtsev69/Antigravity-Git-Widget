@@ -11,6 +11,7 @@ interface AppModalsProps {
   showSettings: boolean;
   showRemoteForm: boolean;
   selectedRepo: string;
+  existingRemotes: string[];
   repos: RepoInfo[];
   config: ScannerConfig;
   busy: boolean;
@@ -37,6 +38,7 @@ export function AppModals({
   showSettings,
   showRemoteForm,
   selectedRepo,
+  existingRemotes,
   repos,
   config,
   busy,
@@ -104,6 +106,7 @@ export function AppModals({
             selectedRepo.split(/[\\/]/).pop() ??
             'new-repo'
           }
+          existingRemotes={existingRemotes}
           hasSavedToken={Boolean(config.has_github_token)}
           busy={busy}
           onClose={onCloseRemote}

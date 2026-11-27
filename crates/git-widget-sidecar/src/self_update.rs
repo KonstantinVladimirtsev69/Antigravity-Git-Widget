@@ -217,6 +217,9 @@ pub fn run_self_update(
         let t3_exe = t3_dir.join("git-widget-sidecar.exe");
         replace_exe_rename_before_copy(&src, &t3_exe)?;
         crate::t3_scripts::deploy_runtime_scripts(t3_dir)?;
+        if ag_dir_override.is_none() && t3_dir_override.is_none() {
+            let _ = crate::t3_scheduler::register_auto_patch_task(t3_dir, &t3_exe, None);
+        }
         respawn_exe = Some(t3_exe);
     }
 

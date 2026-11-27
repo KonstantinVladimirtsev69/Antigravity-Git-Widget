@@ -1,6 +1,9 @@
 //! GitHub Pull Request listing via REST API (using OAuth/PAT token) with `gh` CLI fallback.
 
-use crate::{github_oauth::curl_binary, graph::get_github_url};
+use crate::{
+    github_oauth::curl_binary,
+    graph::{get_github_url_for_remote},
+};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, process::Stdio};
 use tokio::io::AsyncWriteExt;
@@ -95,12 +98,14 @@ async fn fetch_prs_via_rest(owner: &str, repo: &str, token: Option<&str>) -> Opt
     parse_github_rest_prs_json(&String::from_utf8_lossy(&out.stdout))
 }
 
-async fn fetch_prs_via_gh_cli(repo_path: &Path) -> Option<Vec<PullRequestInfo>> {
+async fn fetch_prs_via_gh_cli(repo_path: &Path, owner_repo: &str) -> Option<Vec<PullRequestInfo>> {
     let mut cmd = Command::new("gh");
     cmd.current_dir(repo_path)
         .args([
             "pr",
             "list",
+            "-R",
+            owner_repo,
             "--limit",
             "15",
             "--json",
@@ -140,9 +145,22 @@ async fn fetch_prs_via_gh_cli(repo_path: &Path) -> Option<Vec<PullRequestInfo>> 
     Some(prs)
 }
 
-/// Lists open GitHub PRs via GitHub REST API (OAuth/PAT or public) and falls back to `gh` CLI.
-pub async fn list_github_prs_with_token(repo_path: &Path, token: Option<&str>) -> PrListResponse {
-    let github_url = get_github_url(repo_path).await;
+/// Lists open GitHub PRs for an optional `remote` via REST API with `gh -R owner/repo` fallback.
+/// Never invokes `gh` CLI when `remote` does not resolve to a GitHub repository.
+pub async fn list_github_prs_for_remote_with_token(
+    repo_path: &Path,
+    token: Option<&str>,
+    remote: Option<&str>,
+) -> PrListResponse {
+    let github_url = get_github_url_for_remote(repo_path, remote).await;
+    let Some((owner, repo)) = github_url.as_deref().and_then(extract_github_owner_repo) else {
+        return PrListResponse {
+            gh_available: false,
+            github_url: None,
+            prs: Vec::new(),
+        };
+    };
+
     let env_tok = std::env::var("GH_TOKEN")
         .ok()
         .or_else(|| std::env::var("GITHUB_TOKEN").ok());
@@ -151,17 +169,16 @@ pub async fn list_github_prs_with_token(repo_path: &Path, token: Option<&str>) -
         .filter(|s| !s.is_empty())
         .or_else(|| env_tok.as_deref().map(str::trim).filter(|s| !s.is_empty()));
 
-    if let Some((owner, repo)) = github_url.as_deref().and_then(extract_github_owner_repo) {
-        if let Some(prs) = fetch_prs_via_rest(&owner, &repo, effective_tok).await {
-            return PrListResponse {
-                gh_available: true,
-                github_url,
-                prs,
-            };
-        }
+    if let Some(prs) = fetch_prs_via_rest(&owner, &repo, effective_tok).await {
+        return PrListResponse {
+            gh_available: true,
+            github_url,
+            prs,
+        };
     }
 
-    if let Some(prs) = fetch_prs_via_gh_cli(repo_path).await {
+    let owner_repo = format!("{owner}/{repo}");
+    if let Some(prs) = fetch_prs_via_gh_cli(repo_path, &owner_repo).await {
         return PrListResponse {
             gh_available: true,
             github_url,
@@ -174,6 +191,11 @@ pub async fn list_github_prs_with_token(repo_path: &Path, token: Option<&str>) -
         github_url,
         prs: Vec::new(),
     }
+}
+
+/// Lists open GitHub PRs via GitHub REST API (OAuth/PAT or public) and falls back to `gh` CLI.
+pub async fn list_github_prs_with_token(repo_path: &Path, token: Option<&str>) -> PrListResponse {
+    list_github_prs_for_remote_with_token(repo_path, token, None).await
 }
 
 pub async fn list_github_prs(repo_path: &Path) -> PrListResponse {

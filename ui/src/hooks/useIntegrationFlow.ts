@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { CONVERSATION_ID, api } from '../api';
 import { deliverPromptToHost } from '../utils/hostBridge';
@@ -61,6 +61,13 @@ export function useIntegrationFlow(params: FlowParams) {
     target?: string;
   } | null>(null);
 
+  const activeRemoteRef = useRef(selectedRemote);
+  activeRemoteRef.current = selectedRemote;
+
+  useEffect(() => {
+    setDualSync(null);
+  }, [selectedRemote]);
+
   useEffect(() => {
     if (!selectedRepo || !status || !mergeTarget || mergeTarget === status.branch || busy) {
       if (!mergeTarget || (status && mergeTarget === status.branch)) setDualSync(null);
@@ -68,15 +75,16 @@ export function useIntegrationFlow(params: FlowParams) {
     }
     let cancelled = false;
     const repo = selectedRepo;
+    const remote = selectedRemote;
     const source = mergeDir === 'current_into_target' ? status.branch : mergeTarget;
     const target = mergeDir === 'current_into_target' ? mergeTarget : status.branch;
     const shouldFetch = status.remotes.length > 0 && Date.now() - lastFetchAtRef.current > 20000;
     setScanningSync(shouldFetch);
 
     void api
-      .scanSync(repo, source, target, selectedRemote || undefined, shouldFetch)
+      .scanSync(repo, source, target, remote || undefined, shouldFetch)
       .then((res) => {
-        if (cancelled || activeRepoRef.current !== repo) return;
+        if (cancelled || activeRepoRef.current !== repo || activeRemoteRef.current !== remote) return;
         if (shouldFetch) lastFetchAtRef.current = Date.now();
         setDualSync(res);
         if (shouldFetch) void refreshRepoData(repo, { lightweight: true });
@@ -84,7 +92,7 @@ export function useIntegrationFlow(params: FlowParams) {
       .catch(() => {})
       .finally(() => { if (!cancelled) setScanningSync(false); });
     return () => { cancelled = true; };
-  }, [selectedRepo, mergeTarget, status?.branch, mergeDir]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedRepo, selectedRemote, mergeTarget, status?.branch, mergeDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runSimple = async (fn: () => Promise<{ message?: string }>, fallback = 'Done'): Promise<boolean> => {
     setBusy(true);
@@ -109,7 +117,13 @@ export function useIntegrationFlow(params: FlowParams) {
     setError('');
     setNotice('');
     try {
-      const res = await api.runGuarded(selectedRepo, kind, target, strategy);
+      const res = await api.runGuarded(
+        selectedRepo,
+        kind,
+        target,
+        strategy,
+        kind === 'checkout' ? selectedRemote || undefined : undefined,
+      );
       if (res.blocked_dirty) {
         setDirtyPrompt({ kind, target, files: res.dirty_files });
       } else {
@@ -197,7 +211,10 @@ export function useIntegrationFlow(params: FlowParams) {
     setBusy(true);
     setError('');
     try {
-      setProtectedPrompt({ action: 'push', preview: await api.previewPush(selectedRepo) });
+      setProtectedPrompt({
+        action: 'push',
+        preview: await api.previewPush(selectedRepo, selectedRemote || undefined),
+      });
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
 

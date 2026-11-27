@@ -17,6 +17,10 @@ test('UI components and T3 bridge tooltips/toasts contain no Cyrillic text', () 
   const uiFiles = [
     'ui/src/components/CloneModal.tsx',
     'ui/src/components/CloneProgress.tsx',
+    'ui/src/components/BranchCreateDelete.tsx',
+    'ui/src/BranchPanel.tsx',
+    'ui/src/components/HeaderBar.tsx',
+    'ui/src/components/NoticeFooter.tsx',
     'ui/src/App.tsx',
   ];
   for (const rel of uiFiles) {

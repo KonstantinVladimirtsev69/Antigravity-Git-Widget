@@ -14,6 +14,7 @@ pub mod github_prs;
 pub mod graph;
 pub mod integrate;
 pub mod ops;
+pub mod remote_focus;
 pub mod safety;
 pub mod scanner;
 pub mod stash;

@@ -4,6 +4,7 @@ import type { GithubDeviceFlowStart } from './types';
 
 interface RemoteModalProps {
   defaultRepoName: string;
+  existingRemotes?: string[];
   hasSavedToken: boolean;
   busy: boolean;
   onAddExisting: (name: string, url: string) => Promise<void>;
@@ -21,6 +22,7 @@ interface RemoteModalProps {
 
 export function RemoteModal({
   defaultRepoName,
+  existingRemotes = [],
   hasSavedToken,
   busy,
   onAddExisting,
@@ -29,7 +31,10 @@ export function RemoteModal({
   onError,
   onClose,
 }: RemoteModalProps) {
-  const [mode, setMode] = useState<'github' | 'existing'>('github');
+  const hasExistingRemotes = existingRemotes.length > 0;
+  const [mode, setMode] = useState<'github' | 'existing'>(() =>
+    hasExistingRemotes ? 'existing' : 'github',
+  );
   const [ghName, setGhName] = useState(defaultRepoName);
   const [ghDesc, setGhDesc] = useState('');
   const [isPrivate, setIsPrivate] = useState(true);
@@ -39,9 +44,15 @@ export function RemoteModal({
   const [oauthFlow, setOauthFlow] = useState<GithubDeviceFlowStart | null>(null);
   const [oauthBusy, setOauthBusy] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
-  const [remoteName, setRemoteName] = useState('origin');
+  const [remoteName, setRemoteName] = useState(() =>
+    existingRemotes.includes('origin') ? '' : 'origin',
+  );
   const [remoteUrl, setRemoteUrl] = useState('');
   const pollTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (hasExistingRemotes) setMode('existing');
+  }, [hasExistingRemotes]);
 
   useEffect(() => {
     return () => {
@@ -120,9 +131,11 @@ export function RemoteModal({
     <div className="gw-card gw-stack">
       <div className="gw-between">
         <div className="gw-tabs" style={{ flex: 1 }}>
-          <button type="button" className={`gw-tab ${mode === 'github' ? 'active' : ''}`} onClick={() => setMode('github')}>
-            Create on GitHub
-          </button>
+          {!hasExistingRemotes && (
+            <button type="button" className={`gw-tab ${mode === 'github' ? 'active' : ''}`} onClick={() => setMode('github')}>
+              Create on GitHub
+            </button>
+          )}
           <button type="button" className={`gw-tab ${mode === 'existing' ? 'active' : ''}`} onClick={() => setMode('existing')}>
             Link Existing URL
           </button>
@@ -130,7 +143,7 @@ export function RemoteModal({
         <button className="gw-btn gw-btn-xs" onClick={onClose}>✕</button>
       </div>
 
-      {mode === 'github' ? (
+      {!hasExistingRemotes && mode === 'github' ? (
         <div className="gw-stack" style={{ gap: 6 }}>
           <input className="gw-input" placeholder="Repository name (e.g. git-widget)" value={ghName} onChange={(e) => setGhName(e.target.value)} />
           <input className="gw-input" placeholder="Description (optional)" value={ghDesc} onChange={(e) => setGhDesc(e.target.value)} />

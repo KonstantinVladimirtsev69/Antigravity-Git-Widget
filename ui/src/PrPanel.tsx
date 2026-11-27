@@ -10,7 +10,7 @@ interface PrPanelProps {
 export function PrPanel({ prData, currentBranch, baseBranch }: PrPanelProps) {
   const [open, setOpen] = useState(false);
 
-  if (!prData?.github_url && (!prData || prData.prs.length === 0)) {
+  if (!prData?.github_url) {
     return null;
   }
 

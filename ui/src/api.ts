@@ -21,46 +21,15 @@ import type {
   ScannerConfig,
   StartCloneRequest,
   StashEntry,
+  SwitchRemoteResponse,
   UpdateCheckResponse,
   UpdateStatusResponse,
 } from './types';
+import { ApiError, CONVERSATION_ID, request } from './utils/http';
 
-export class ApiError extends Error {
-  readonly status: number;
-  readonly body?: unknown;
+export { ApiError, CONVERSATION_ID };
 
-  constructor(status: number, message: string, body?: unknown) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.body = body;
-  }
-}
-
-const params = new URLSearchParams(window.location.search);
-const SIDE_TOKEN = params.get('token') ?? '';
-export const CONVERSATION_ID = params.get('conversationId') ?? '';
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = new Headers(init?.headers);
-  headers.set('Content-Type', 'application/json');
-  if (SIDE_TOKEN) {
-    headers.set('X-Sidecar-Token', SIDE_TOKEN);
-  }
-  const res = await fetch(path, { ...init, headers });
-  const text = await res.text();
-  if (!res.ok) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      // raw text
-    }
-    const msg = (parsed as { error?: string } | undefined)?.error || text || `HTTP ${res.status}`;
-    throw new ApiError(res.status, msg, parsed);
-  }
-  return JSON.parse(text) as T;
-}
+const remoteParam = (remote?: string) => (remote ? `&remote=${encodeURIComponent(remote)}` : '');
 
 export const api = {
   checkUpdate: (force = false) =>
@@ -81,11 +50,23 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ workspace_uris: workspaceUris }),
     }),
-  getStatus: (repo: string) => request<RepoStatus>(`./api/status?repo=${encodeURIComponent(repo)}`),
-  runGuarded: (repo: string, kind: GuardedOpKind, target: string | null, strategy: DirtyStrategy) =>
+  getStatus: (repo: string, remote?: string) =>
+    request<RepoStatus>(`./api/status?repo=${encodeURIComponent(repo)}${remoteParam(remote)}`),
+  switchRemote: (repo: string, remote: string) =>
+    request<SwitchRemoteResponse>('./api/git/switch-remote', {
+      method: 'POST',
+      body: JSON.stringify({ repo, remote }),
+    }),
+  runGuarded: (
+    repo: string,
+    kind: GuardedOpKind,
+    target: string | null,
+    strategy: DirtyStrategy,
+    remote?: string,
+  ) =>
     request<GuardedOpOutcome>('./api/git/guarded', {
       method: 'POST',
-      body: JSON.stringify({ repo, kind, target, strategy }),
+      body: JSON.stringify({ repo, kind, target, strategy, remote }),
     }),
   fetchAll: (repo: string, remote?: string) =>
     request<OpResult>('./api/git/fetch', { method: 'POST', body: JSON.stringify({ repo, remote }) }),
@@ -146,10 +127,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ repo, name, force }),
     }),
-  checkoutRemote: (repo: string, remoteBranch: string) =>
+  checkoutRemote: (repo: string, remoteBranch: string, remote?: string) =>
     request<OpResult>('./api/git/branch-checkout-remote', {
       method: 'POST',
-      body: JSON.stringify({ repo, remote_branch: remoteBranch }),
+      body: JSON.stringify({ repo, remote_branch: remoteBranch, remote }),
     }),
   undoCommit: (repo: string) =>
     request<OpResult>('./api/git/undo-commit', { method: 'POST', body: JSON.stringify({ repo }) }),
@@ -206,8 +187,8 @@ export const api = {
     }),
   previewMerge: (repo: string, source: string) =>
     request<ActionPreview>('./api/git/preview-merge', { method: 'POST', body: JSON.stringify({ repo, source }) }),
-  previewPush: (repo: string) =>
-    request<ActionPreview>('./api/git/preview-push', { method: 'POST', body: JSON.stringify({ repo }) }),
+  previewPush: (repo: string, remote?: string) =>
+    request<ActionPreview>('./api/git/preview-push', { method: 'POST', body: JSON.stringify({ repo, remote }) }),
   sendConflictToChat: (repo: string, conversationId: string) =>
     request<ConflictChatResponse>('./api/git/send-conflict-to-chat', {
       method: 'POST',
@@ -215,16 +196,16 @@ export const api = {
     }),
   getCommits: (repo: string) =>
     request<CommitInfo[]>(`./api/commits?repo=${encodeURIComponent(repo)}`),
-  getGraph: (repo: string, all = true, author?: string) =>
+  getGraph: (repo: string, all = true, author?: string, remote?: string) =>
     request<GraphResponse>(
-      `./api/graph?repo=${encodeURIComponent(repo)}&all=${all}${author ? `&author=${encodeURIComponent(author)}` : ''}`,
+      `./api/graph?repo=${encodeURIComponent(repo)}&all=${all}${author ? `&author=${encodeURIComponent(author)}` : ''}${remoteParam(remote)}`,
     ),
   getCommitDetails: (repo: string, hash: string) =>
     request<CommitDetails>(
       `./api/commit-details?repo=${encodeURIComponent(repo)}&hash=${encodeURIComponent(hash)}`,
     ),
-  getPrs: (repo: string) =>
-    request<PrListResponse>(`./api/prs?repo=${encodeURIComponent(repo)}`),
+  getPrs: (repo: string, remote?: string) =>
+    request<PrListResponse>(`./api/prs?repo=${encodeURIComponent(repo)}${remoteParam(remote)}`),
   suggestCommit: (repo: string, conversationId: string) =>
     request<ConflictChatResponse>('./api/ai/suggest-commit', {
       method: 'POST',

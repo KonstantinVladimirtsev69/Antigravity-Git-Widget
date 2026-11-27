@@ -38,9 +38,41 @@
     child.on('error', () => {});
 
     let killed = false;
+    let updateWatcherSpawned = false;
+    const isPendingT3Update = () => {
+      try {
+        const localAppData = process.env.LOCALAPPDATA;
+        if (!localAppData) return false;
+        const pendingDir = path.join(localAppData, 't3code-updater', 'pending');
+        if (!fs.existsSync(pendingDir)) return false;
+        return fs.readdirSync(pendingDir).length > 0;
+      } catch (_) {
+        return false;
+      }
+    };
+    const spawnUpdateWatcher = () => {
+      if (updateWatcherSpawned) return;
+      updateWatcherSpawned = true;
+      try {
+        const watcher = spawn(
+          sidecarExe,
+          ['--ensure-t3-patched', '--watch-update'],
+          {
+            stdio: 'ignore',
+            windowsHide: true,
+            detached: true,
+          }
+        );
+        watcher.on('error', () => {});
+        watcher.unref();
+      } catch (_) {}
+    };
     const cleanup = () => {
       if (killed) return;
       killed = true;
+      if (isPendingT3Update()) {
+        spawnUpdateWatcher();
+      }
       try {
         if (child && !child.killed) child.kill();
       } catch (_) {}
@@ -55,6 +87,9 @@
 
     try {
       const electron = require('electron');
+      if (electron && electron.autoUpdater && typeof electron.autoUpdater.once === 'function') {
+        electron.autoUpdater.once('before-quit-for-update', spawnUpdateWatcher);
+      }
       if (electron && electron.app && typeof electron.app.once === 'function') {
         electron.app.once('will-quit', cleanup);
         electron.app.once('before-quit', cleanup);
