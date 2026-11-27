@@ -4,7 +4,9 @@ pub use crate::status_parser::{BranchTracking, FileChange};
 use crate::{
     error::{CoreError, Result},
     git_cli::{run_git, LOCAL_TIMEOUT_SECS},
+    remote_focus::apply_remote_scoped_tracking,
     status_parser::{parse_porcelain_entry, parse_track_counts},
+    validation::validate_ref_name,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -17,6 +19,8 @@ use tokio::task::JoinSet;
 pub struct RepoStatus {
     pub branch: String,
     pub upstream: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configured_upstream: Option<String>,
     pub ahead: u32,
     pub behind: u32,
     pub is_dirty: bool,
@@ -34,6 +38,16 @@ pub struct RepoStatus {
 
 /// Reads full status (`git status --porcelain=v2 --branch`) and branch list concurrently.
 pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
+    get_status_for_remote(repo_path, None).await
+}
+
+/// Reads repository status scoped to an optional `remote` without falling back to `origin`.
+pub async fn get_status_for_remote(repo_path: &Path, remote: Option<&str>) -> Result<RepoStatus> {
+    let scoped_remote = match remote.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(r) => Some(validate_ref_name(r, "remote")?),
+        None => None,
+    };
+
     let dot_git = repo_path.join(".git");
     if !dot_git.exists() {
         return Err(CoreError::NotAGitRepo(repo_path.to_string_lossy().to_string()));
@@ -102,7 +116,23 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
         }
     }
 
-    fill_fallback_tracking(repo_path, &local_branches, &remote_branches, &remotes, &mut branch_tracking).await;
+    let configured_upstream = scoped_remote.as_ref().and(upstream.clone());
+    if let Some(rem) = scoped_remote {
+        let (scoped_up, scoped_a, scoped_b) = apply_remote_scoped_tracking(
+            repo_path,
+            rem,
+            &branch,
+            &local_branches,
+            &remote_branches,
+            &mut branch_tracking,
+        )
+        .await;
+        upstream = scoped_up;
+        ahead = scoped_a;
+        behind = scoped_b;
+    } else {
+        fill_fallback_tracking(repo_path, &local_branches, &remote_branches, &remotes, &mut branch_tracking).await;
+    }
     let is_merging = git_dir.join("MERGE_HEAD").exists();
     let is_rebasing = git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists();
     let is_dirty = !changes.is_empty();
@@ -110,6 +140,7 @@ pub async fn get_status(repo_path: &Path) -> Result<RepoStatus> {
     Ok(RepoStatus {
         branch,
         upstream,
+        configured_upstream,
         ahead,
         behind,
         is_dirty,
@@ -236,7 +267,7 @@ async fn fill_fallback_tracking(
     }
 }
 
-async fn list_remotes(repo_path: &Path) -> Vec<String> {
+pub(crate) async fn list_remotes(repo_path: &Path) -> Vec<String> {
     match run_git(repo_path, &["remote"], LOCAL_TIMEOUT_SECS).await {
         Ok(out) => out
             .stdout

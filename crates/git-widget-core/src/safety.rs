@@ -6,7 +6,8 @@ use crate::{
     ops::{
         checkout_branch, commit_all, merge_branch, pull_remote, stash_pop, stash_save, OpResult,
     },
-    status::{get_status, RepoStatus},
+    remote_focus::try_set_upstream_to,
+    status::{get_status, get_status_for_remote, RepoStatus},
     validation::validate_ref_name,
 };
 use serde::{Deserialize, Serialize};
@@ -101,13 +102,18 @@ pub(crate) async fn finalize_auto_stash(
     Ok(false)
 }
 
-/// Executes checkout/pull/merge with a dirty-tree safety guard and automatic stash rollback on error.
-pub async fn run_with_dirty_guard(
+/// Executes checkout/pull/merge with a dirty-tree safety guard and optional remote upstream sync.
+pub async fn run_with_dirty_guard_for_remote(
     repo_path: &Path,
     kind: GuardedOpKind,
     target: Option<&str>,
     strategy: DirtyStrategy,
+    remote: Option<&str>,
 ) -> Result<GuardedOpOutcome> {
+    let req_remote = match remote.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(r) => Some(validate_ref_name(r, "remote")?),
+        None => None,
+    };
     let status = get_status(repo_path).await?;
     let (blocked, did_stash) = prepare_dirty_tree(repo_path, &status, strategy).await?;
     if let Some(outcome) = blocked {
@@ -131,12 +137,30 @@ pub async fn run_with_dirty_guard(
     };
 
     let stash_restored = finalize_auto_stash(repo_path, did_stash, &mut op_res).await?;
+    if matches!(kind, GuardedOpKind::Checkout) && op_res.success && !op_res.has_conflicts {
+        if let Some(r) = req_remote {
+            let checked_out = target.map(str::trim).filter(|b| !b.is_empty());
+            if let Some(b) = checked_out {
+                try_set_upstream_to(repo_path, r, b).await?;
+            }
+        }
+    }
     Ok(GuardedOpOutcome {
         blocked_dirty: false,
         dirty_files: Vec::new(),
         op_result: Some(op_res),
         stash_restored,
     })
+}
+
+/// Executes checkout/pull/merge with a dirty-tree safety guard and automatic stash rollback on error.
+pub async fn run_with_dirty_guard(
+    repo_path: &Path,
+    kind: GuardedOpKind,
+    target: Option<&str>,
+    strategy: DirtyStrategy,
+) -> Result<GuardedOpOutcome> {
+    run_with_dirty_guard_for_remote(repo_path, kind, target, strategy, None).await
 }
 
 /// Builds a commit preview before merging `source_branch` into the current branch.
@@ -162,13 +186,21 @@ pub async fn preview_merge(repo_path: &Path, source_branch: &str) -> Result<Acti
     })
 }
 
-/// Builds a commit preview before pushing current branch to upstream.
-pub async fn preview_push(repo_path: &Path) -> Result<ActionPreview> {
-    let status = get_status(repo_path).await?;
+/// Builds a commit preview before pushing current branch to `remote` (or configured upstream).
+pub async fn preview_push_for_remote(
+    repo_path: &Path,
+    remote: Option<&str>,
+) -> Result<ActionPreview> {
+    let req_remote = match remote.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(r) => Some(validate_ref_name(r, "remote")?),
+        None => None,
+    };
+    let status = get_status_for_remote(repo_path, req_remote).await?;
+    let effective_remote = req_remote.unwrap_or("origin");
     let target = status
         .upstream
         .clone()
-        .unwrap_or_else(|| format!("origin/{}", status.branch));
+        .unwrap_or_else(|| format!("{effective_remote}/{}", status.branch));
     let range = format!("{target}..HEAD");
     let commits = match run_git(repo_path, &["log", "--oneline", &range], LOCAL_TIMEOUT_SECS).await
     {
@@ -189,6 +221,11 @@ pub async fn preview_push(repo_path: &Path) -> Result<ActionPreview> {
         commit_count: commits.len(),
         commits,
     })
+}
+
+/// Builds a commit preview before pushing current branch to upstream.
+pub async fn preview_push(repo_path: &Path) -> Result<ActionPreview> {
+    preview_push_for_remote(repo_path, None).await
 }
 
 pub async fn abort_merge(repo_path: &Path) -> Result<OpResult> {

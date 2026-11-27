@@ -50,24 +50,35 @@ pub async fn pull_remote(repo_path: &Path, remote: Option<&str>) -> Result<OpRes
             "No git remote configured. Add a remote first.".to_string(),
         ));
     }
+    if !crate::remote_focus::is_attached_branch_name(&st_before.branch) {
+        return Err(CoreError::InvalidInput(
+            "Cannot pull while HEAD is detached or unborn.".to_string(),
+        ));
+    }
     let req_remote = match remote.map(str::trim).filter(|r| !r.is_empty()) {
         Some(r) => Some(validate_ref_name(r, "remote")?),
         None => None,
     };
 
-    let out = match (req_remote, st_before.upstream.as_deref()) {
-        (Some(r), Some(up)) if up.starts_with(&format!("{r}/")) => {
+    let upstream_remote = st_before
+        .upstream
+        .as_deref()
+        .and_then(|up| crate::remote_focus::split_remote_branch(up, &st_before.remotes))
+        .map(|(r, _)| r);
+
+    let out = match (req_remote, upstream_remote) {
+        (Some(r), Some(up_r)) if up_r == r => {
             run_git_raw(repo_path, &["pull"], NETWORK_TIMEOUT_SECS).await?
         }
         (Some(r), _) => {
             run_git_raw(repo_path, &["pull", r, &st_before.branch], NETWORK_TIMEOUT_SECS).await?
         }
-        (None, None) => {
+        (None, _) if st_before.upstream.is_none() => {
             return Err(CoreError::InvalidInput(
                 "Branch has no upstream. Publish branch first.".to_string(),
             ));
         }
-        (None, Some(_)) => run_git_raw(repo_path, &["pull"], NETWORK_TIMEOUT_SECS).await?,
+        (None, _) => run_git_raw(repo_path, &["pull"], NETWORK_TIMEOUT_SECS).await?,
     };
 
     if out.success {
