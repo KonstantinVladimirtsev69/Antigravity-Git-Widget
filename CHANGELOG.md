@@ -5,7 +5,14 @@ All notable changes to **Antigravity Git Widget** will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.2] - 2026-11-27
+## [0.4.0] - 2026-11-27
+
+### Added
+- **Multi-Remote Focus & Upstream Switching (Phase 13)**:
+  - **Atomic Remote Switching (`POST /api/git/switch-remote`)**: Switching remotes in `HeaderBar` fetches the selected remote and updates `.git/config` tracking via `git branch --set-upstream-to=<remote>/<branch>` when `<remote>/<branch>` exists and `HEAD` is not detached, while preserving existing `.git/config` upstreams when the branch is not yet published on the target remote.
+  - **Per-Repo Persistence & Stale-Response Guards (`remoteFocus`, `useRepoData`)**: Persists the active remote per normalized repository path in `localStorage` (`savedRemote -> upstream prefix -> origin -> remotes[0]`), safely handles `/` in remote names (e.g. `team/fork` vs `team`), and protects all status, graph, PR, and sync updates with `activeRepoRef`, `activeRemoteRef`, and monotonic request sequence checks.
+  - **Remote-Scoped Status, Graph, PRs, Push Preview & Sync**: Scopes `/api/status`, `/api/graph`, `/api/prs`, `/api/git/preview-push`, `scan_integration_sync`, `pull_both_branches`, and `checkout` strictly to the selected remote without silent fallback to `origin`; hides `PrPanel` and the `HeaderBar` GitHub `↗` link on non-GitHub remotes, shows `Publish Branch` when unpublished on the focused remote, and hides `Create on GitHub` in `RemoteModal` when remotes already exist.
+  - **Divergence & Offline Resilience**: Displays a compact amber `Diverged ↑A ↓B` badge in `BranchPanel` when `ahead > 0 && behind > 0`, and surfaces non-blocking `fetch_warning` notices with a `Retry` button and 10s auto-dismiss in `NoticeFooter` without reverting remote focus.
 
 ### Fixed
 - **T3 Code Update Auto-Repatch (`t3-loader.cjs`, `t3_watch`)**: Intercepts T3 Code's `before-quit-for-update` and pending-update exit events to spawn a detached `--ensure-t3-patched --watch-update` watcher that automatically repatches `resources/app.asar` when replaced by `t3code-updater` (never killing T3 Code; sends one Windows restart toast and waits for unlock if T3 Code re-locks `app.asar` first).
