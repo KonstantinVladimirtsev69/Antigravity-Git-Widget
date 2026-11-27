@@ -56,7 +56,7 @@ fn configure_user(dir: &Path) {
 
 struct TwoRemoteFixture {
     _tmp: TempDir,
-    bare_origin: PathBuf,
+    _bare_origin: PathBuf,
     bare_second: PathBuf,
     dev_origin: PathBuf,
     dev_second: PathBuf,
@@ -106,7 +106,7 @@ fn setup_two_bare_remotes() -> TwoRemoteFixture {
 
     TwoRemoteFixture {
         _tmp: tmp,
-        bare_origin,
+        _bare_origin: bare_origin,
         bare_second,
         dev_origin,
         dev_second,
@@ -540,4 +540,28 @@ async fn diverged_pull_conflicts_and_unrelated_histories() {
 
     let unrelated = pull_remote(&fx.work, Some("second")).await;
     assert!(matches!(unrelated, Err(CoreError::GitFailed { .. })));
+}
+
+#[tokio::test]
+async fn preview_push_unpublished_remote_branch_avoids_origin_fallback() {
+    let fx = setup_two_bare_remotes();
+
+    // Branch `feat` is published only on `origin`, with one unpushed commit locally vs `origin/feat`
+    git_sync(&fx.dev_origin, &["checkout", "-b", "feat", "main"]);
+    git_sync(&fx.dev_origin, &["push", "-u", "origin", "feat"]);
+    git_sync(&fx.work, &["fetch", "origin"]);
+    git_sync(&fx.work, &["checkout", "--track", "origin/feat"]);
+    fs::write(fx.work.join("local_only.txt"), "unpushed\n").unwrap();
+    git_sync(&fx.work, &["add", "."]);
+    git_sync(&fx.work, &["commit", "-m", "local feat commit"]);
+
+    let preview_second = preview_push_for_remote(&fx.work, Some("second")).await.unwrap();
+    assert_eq!(preview_second.source, "feat");
+    assert_eq!(preview_second.target, "second/feat");
+    assert_eq!(preview_second.commit_count, 0);
+    assert!(preview_second.commits.is_empty());
+
+    let preview_origin = preview_push_for_remote(&fx.work, Some("origin")).await.unwrap();
+    assert_eq!(preview_origin.target, "origin/feat");
+    assert_eq!(preview_origin.commit_count, 1);
 }

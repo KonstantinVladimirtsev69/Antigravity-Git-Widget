@@ -383,6 +383,28 @@ async fn status_graph_prs_preview_push_respect_remote_param() {
     let status_def: RepoStatus = serde_json::from_str(&body_def).unwrap();
     assert_eq!(status_def.upstream.as_deref(), Some("origin/main"));
 
+    // 1b) Reject flag-injection / invalid remote query params with 400 (T-13-02)
+    let bad_q = url_encode("--upload-pack=evil");
+    let (st_bad_status, _) = http_req(
+        addr,
+        "GET",
+        &format!("/api/status?repo={repo_q}&remote={bad_q}"),
+        Some("tok-q"),
+        None,
+    )
+    .await;
+    assert_eq!(st_bad_status, 400);
+
+    let (st_bad_graph, _) = http_req(
+        addr,
+        "GET",
+        &format!("/api/graph?repo={repo_q}&all=true&remote={bad_q}"),
+        Some("tok-q"),
+        None,
+    )
+    .await;
+    assert_eq!(st_bad_graph, 400);
+
     // 2) /api/graph?repo=...&all=true&remote=second and all=false
     let (st_ga, body_ga) = http_req(
         addr,
