@@ -26,6 +26,7 @@ pub enum CliMode {
     },
     EnsureT3Patched {
         t3_dir: Option<PathBuf>,
+        watch_update: bool,
     },
     SelfUpdate {
         parent_pid: u32,
@@ -64,6 +65,7 @@ pub fn parse_cli_args(args: &[String], has_antigravity_port_env: bool) -> Result
     let mut is_serve = false;
     let mut is_uninstall_t3 = false;
     let mut is_ensure_t3 = false;
+    let mut watch_update = false;
     let mut is_self_update = false;
     let mut auto_close_t3 = false;
     let mut target: Option<InstallTarget> = None;
@@ -83,6 +85,7 @@ pub fn parse_cli_args(args: &[String], has_antigravity_port_env: bool) -> Result
             "--serve" => is_serve = true,
             "--uninstall-t3" => is_uninstall_t3 = true,
             "--ensure-t3-patched" => is_ensure_t3 = true,
+            "--watch-update" => watch_update = true,
             "--self-update" => is_self_update = true,
             "--auto-close-t3" => auto_close_t3 = true,
             "--target" => target = Some(parse_target(&next_value(args, &mut i, "--target")?)?),
@@ -151,7 +154,10 @@ pub fn parse_cli_args(args: &[String], has_antigravity_port_env: bool) -> Result
         return Ok(CliMode::UninstallT3 { t3_dir });
     }
     if is_ensure_t3 {
-        return Ok(CliMode::EnsureT3Patched { t3_dir });
+        return Ok(CliMode::EnsureT3Patched {
+            t3_dir,
+            watch_update,
+        });
     }
     if is_serve {
         return Ok(CliMode::Serve {

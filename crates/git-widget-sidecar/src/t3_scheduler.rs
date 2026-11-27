@@ -25,6 +25,18 @@ pub fn write_silent_launcher(install_dir: &Path) -> Result<std::path::PathBuf, S
     Ok(vbs_path)
 }
 
+pub fn build_register_task_script(task_name: &str, vbs_path: &Path) -> String {
+    let vbs_escaped = vbs_path.to_string_lossy().replace('\'', "''");
+    format!(
+        "$ErrorActionPreference='Stop'; \
+         $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '//B //Nologo \"{vbs_escaped}\"'; \
+         $t1 = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; \
+         $t2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 15); \
+         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -ExecutionTimeLimit (New-TimeSpan -Minutes 1); \
+         Register-ScheduledTask -TaskName '{task_name}' -Action $action -Trigger @($t1,$t2) -Settings $settings -Force | Out-Null"
+    )
+}
+
 pub fn register_auto_patch_task(
     install_dir: &Path,
     _sidecar_exe: &Path,
@@ -34,15 +46,7 @@ pub fn register_auto_patch_task(
 
     #[cfg(windows)]
     {
-        let vbs_escaped = vbs_path.to_string_lossy().replace('\'', "''");
-        let ps = format!(
-            "$ErrorActionPreference='Stop'; \
-             $action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument '//B //Nologo \"{vbs_escaped}\"'; \
-             $t1 = New-ScheduledTaskTrigger -AtLogOn; \
-             $t2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 15); \
-             $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -ExecutionTimeLimit (New-TimeSpan -Minutes 1); \
-             Register-ScheduledTask -TaskName '{TASK_NAME}' -Action $action -Trigger @($t1,$t2) -Settings $settings -Force | Out-Null"
-        );
+        let ps = build_register_task_script(TASK_NAME, &vbs_path);
         let output = Command::new("powershell")
             .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
             .creation_flags(CREATE_NO_WINDOW)

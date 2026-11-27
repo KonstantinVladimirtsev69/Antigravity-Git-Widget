@@ -5,6 +5,7 @@ pub mod t3_fuses;
 pub mod t3_scheduler;
 pub mod t3_scripts;
 pub mod t3_installer;
+pub mod t3_watch;
 pub mod cli;
 pub mod clone_routes;
 pub mod config;

@@ -36,7 +36,7 @@ use git_widget_sidecar::{
     },
     config,
     fs_routes::{open_explorer_handler, pick_folder_handler},
-    routes, self_update, t3_installer, update_routes,
+    routes, self_update, t3_installer, t3_watch, update_routes,
 };
 use github_routes::{
     create_github_repo_handler, oauth_logout_handler, oauth_poll_handler, oauth_start_handler,
@@ -100,6 +100,9 @@ async fn bind_loopback(preferred: u16) -> TcpListener {
 
 async fn run_server(port: u16, port_file: Option<PathBuf>, is_serve_mode: bool) {
     self_update::cleanup_stale_update_dirs();
+    tokio::task::spawn_blocking(|| {
+        let _ = t3_installer::ensure_t3_patched(None);
+    });
     let listener = bind_loopback(port).await;
     let addr = listener.local_addr().expect("failed reading local_addr");
 
@@ -231,8 +234,16 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        CliMode::EnsureT3Patched { t3_dir } => {
-            if let Err(err) = t3_installer::ensure_t3_patched(t3_dir.as_deref()) {
+        CliMode::EnsureT3Patched {
+            t3_dir,
+            watch_update,
+        } => {
+            let res = if watch_update {
+                t3_watch::watch_and_repatch_t3(t3_dir.as_deref()).map(|_| ())
+            } else {
+                t3_installer::ensure_t3_patched(t3_dir.as_deref())
+            };
+            if let Err(err) = res {
                 eprintln!("[git-widget] {err}");
             }
         }

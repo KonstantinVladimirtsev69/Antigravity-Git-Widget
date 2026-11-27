@@ -121,7 +121,10 @@ fn parses_t3_install_uninstall_ensure_and_serve_cli_flags() {
     let ensure: Vec<String> = vec!["bin".into(), "--ensure-t3-patched".into()];
     assert_eq!(
         parse_cli_args(&ensure, false).unwrap(),
-        CliMode::EnsureT3Patched { t3_dir: None }
+        CliMode::EnsureT3Patched {
+            t3_dir: None,
+            watch_update: false,
+        }
     );
 
     let uninstall: Vec<String> = vec!["bin".into(), "--uninstall-t3".into()];

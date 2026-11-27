@@ -238,37 +238,59 @@ pub fn uninstall_t3_code(t3_dir_override: Option<&Path>) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatchAttempt {
+    AlreadyPatched,
+    PatchedNow,
+    Locked,
+    UnsafeFuses,
+    MissingTarget,
+}
+
+/// Attempts a single silent self-heal check for `t3_dir` using scripts in `install_dir`.
+pub fn try_ensure_t3_patched_in(
+    t3_dir: &Path,
+    install_dir: &Path,
+) -> Result<PatchAttempt, String> {
+    let asar_path = t3_dir.join("resources").join("app.asar");
+    if !asar_path.exists() {
+        return Ok(PatchAttempt::MissingTarget);
+    }
+    // Fast-path (< 10ms): header + boot.cjs read only, zero disk writes.
+    if is_boot_patched(&asar_path).unwrap_or(false) {
+        return Ok(PatchAttempt::AlreadyPatched);
+    }
+    // Prohibition P4: silently defer if T3 Code is running and holds a lock.
+    if is_file_locked(&asar_path) {
+        return Ok(PatchAttempt::Locked);
+    }
+    let exe_path = match find_t3_executable(t3_dir) {
+        Ok(p) => p,
+        Err(_) => return Ok(PatchAttempt::MissingTarget),
+    };
+    // Prohibition P3: never patch if future T3 Code enables ASAR integrity validation.
+    if verify_safe_to_patch(&exe_path).is_err() {
+        return Ok(PatchAttempt::UnsafeFuses);
+    }
+    let loader_path = install_dir.join("t3-loader.cjs");
+    if !loader_path.exists() {
+        deploy_runtime_scripts(install_dir)?;
+    }
+    match patch_app_asar(&asar_path, &loader_path) {
+        Ok(PatchOutcome::Patched) => Ok(PatchAttempt::PatchedNow),
+        Ok(PatchOutcome::AlreadyPatched) => Ok(PatchAttempt::AlreadyPatched),
+        Err(_) if is_file_locked(&asar_path) => Ok(PatchAttempt::Locked),
+        Err(e) => Err(e),
+    }
+}
+
 /// Silent background self-healing check (Prohibition P4: never kills T3 Code, exits 0 if locked).
 pub fn ensure_t3_patched(t3_dir_override: Option<&Path>) -> Result<(), String> {
     let t3_dir = match resolve_t3_dir(t3_dir_override) {
         Ok(d) if d.exists() => d,
         _ => return Ok(()),
     };
-    let asar_path = t3_dir.join("resources").join("app.asar");
-    if !asar_path.exists() {
-        return Ok(());
-    }
-    // Fast-path (< 10ms): header + boot.cjs read only, zero disk writes.
-    if is_boot_patched(&asar_path).unwrap_or(false) {
-        return Ok(());
-    }
-    // Prohibition P4: silently defer if T3 Code is running and holds a lock.
-    if is_file_locked(&asar_path) {
-        return Ok(());
-    }
-    let exe_path = match find_t3_executable(&t3_dir) {
-        Ok(p) => p,
-        Err(_) => return Ok(()),
-    };
-    // Prohibition P3: never patch if future T3 Code enables ASAR integrity validation.
-    if verify_safe_to_patch(&exe_path).is_err() {
-        return Ok(());
-    }
     let install_dir = git_widget_local_dir()?;
-    let loader_path = install_dir.join("t3-loader.cjs");
-    if !loader_path.exists() {
-        deploy_runtime_scripts(&install_dir)?;
-    }
-    let _ = patch_app_asar(&asar_path, &loader_path);
+    let _ = try_ensure_t3_patched_in(&t3_dir, &install_dir)?;
     Ok(())
 }

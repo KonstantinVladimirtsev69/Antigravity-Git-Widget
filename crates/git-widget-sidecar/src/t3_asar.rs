@@ -213,10 +213,9 @@ pub fn patch_app_asar(asar_path: &Path, loader_path: &Path) -> Result<PatchOutco
         return Ok(PatchOutcome::AlreadyPatched);
     }
     let bak = backup_path_for(asar_path);
-    if !bak.exists() {
-        fs::copy(asar_path, &bak)
-            .map_err(|e| format!("Failed creating backup {}: {e}", bak.display()))?;
-    }
+    // Always refresh backup when patching an unpatched ASAR (e.g., after T3 Code updates).
+    fs::copy(asar_path, &bak)
+        .map_err(|e| format!("Failed creating backup {}: {e}", bak.display()))?;
 
     let mut file = File::open(asar_path)
         .map_err(|e| format!("Failed opening {}: {e}", asar_path.display()))?;
