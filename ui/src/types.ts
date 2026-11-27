@@ -121,6 +121,7 @@ export interface FileChange {
 export interface RepoStatus {
   branch: string;
   upstream: string | null;
+  configured_upstream?: string | null;
   ahead: number;
   behind: number;
   is_dirty: boolean;
@@ -134,6 +135,13 @@ export interface RepoStatus {
   remote_branches: string[];
   remotes: string[];
   branch_tracking: Record<string, BranchTracking>;
+}
+
+export interface SwitchRemoteResponse {
+  status: RepoStatus;
+  upstream_switched: boolean;
+  target_upstream: string | null;
+  fetch_warning: string | null;
 }
 
 export interface StashEntry {
