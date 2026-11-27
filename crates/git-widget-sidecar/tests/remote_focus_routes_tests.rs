@@ -327,7 +327,7 @@ async fn status_graph_prs_preview_push_respect_remote_param() {
     fs::write(w_second.join("dev.txt"), "dev on second\n").unwrap();
     git_sync(&w_second, &["add", "."]);
     git_sync(&w_second, &["commit", "-m", "second dev commit"]);
-    git_sync(&w_second, &["push", "second", "HEAD:dev"]);
+    git_sync(&w_second, &["push", "origin", "HEAD:dev"]);
     git_sync(&local, &["fetch", "second"]);
 
     // Local dev branch + unpushed commit on main so preview-push sees 1 commit ahead of second/main

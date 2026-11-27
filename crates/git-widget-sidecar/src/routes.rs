@@ -13,7 +13,7 @@ use axum::{
 use git_widget_core::{
     integrate::IntegrationMode,
     scanner::{scan_repositories, RepoInfo, ScannerConfig},
-    status::get_status,
+    status::get_status_for_remote,
     CoreError,
 };
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,8 @@ pub struct ReposResponse {
 #[derive(Deserialize)]
 pub struct RepoQuery {
     pub repo: String,
+    #[serde(default)]
+    pub remote: Option<String>,
 }
 
 pub fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
@@ -189,7 +191,7 @@ pub async fn status_handler(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
-    match get_status(Path::new(&q.repo)).await {
+    match get_status_for_remote(Path::new(&q.repo), q.remote.as_deref()).await {
         Ok(s) => Json(s).into_response(),
         Err(e) => map_err(e),
     }

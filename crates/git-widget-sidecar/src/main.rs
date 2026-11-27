@@ -1,12 +1,8 @@
 //! Antigravity 2.0 & T3 Code Sidecar HTTP server with embedded React Web UI.
 
-mod branch_routes;
 mod diff_routes;
-mod git_routes;
 mod github_routes;
-mod graph_routes;
 mod installer;
-mod integrate_routes;
 mod workspace;
 
 use axum::{
@@ -15,38 +11,40 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use branch_routes::{
-    checkout_remote_handler, cherry_pick_handler, create_branch_handler, delete_branch_handler,
-    discard_all_handler, list_stashes_handler, stage_all_handler, stash_apply_handler,
-    stash_drop_handler, stash_pop_at_handler, undo_commit_handler, unstage_all_handler,
-};
 use diff_routes::{
     accept_hunk_handler, ask_ai_handler, commits_list_handler, diff_list_handler,
     discard_file_handler, reject_hunk_handler, stage_file_handler, unstage_file_handler,
 };
-use git_routes::{
-    abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, guarded_handler,
-    init_repo_handler, preview_merge_handler, preview_push_handler, publish_handler, pull_handler,
-    push_handler, send_conflict_to_chat_handler, stash_pop_handler, stash_save_handler,
-};
 use git_widget_sidecar::{
+    branch_routes::{
+        checkout_remote_handler, cherry_pick_handler, create_branch_handler, delete_branch_handler,
+        discard_all_handler, list_stashes_handler, stage_all_handler, stash_apply_handler,
+        stash_drop_handler, stash_pop_at_handler, undo_commit_handler, unstage_all_handler,
+    },
     cli::{parse_cli_args, CliMode},
     clone_routes::{
         cancel_clone_handler, clone_status_handler, start_clone_handler, CloneManager,
     },
     config,
     fs_routes::{open_explorer_handler, pick_folder_handler},
-    routes, self_update, t3_installer, t3_watch, update_routes,
+    git_routes::{
+        abort_merge_handler, add_remote_handler, commit_handler, fetch_handler, guarded_handler,
+        init_repo_handler, preview_merge_handler, preview_push_handler, publish_handler,
+        pull_handler, push_handler, send_conflict_to_chat_handler, stash_pop_handler,
+        stash_save_handler, switch_remote_handler,
+    },
+    graph_routes::{commit_details_handler, graph_handler, prs_handler, suggest_commit_handler},
+    integrate_routes::{
+        abort_rebase_handler, continue_rebase_handler, integrate_handler,
+        preview_integrate_handler, pull_both_handler, save_integration_mode_handler,
+        scan_sync_handler,
+    },
+    routes::{self, get_repos, init_config, post_config, status_handler, AppState},
+    self_update, t3_installer, t3_watch, update_routes,
 };
 use github_routes::{
     create_github_repo_handler, oauth_logout_handler, oauth_poll_handler, oauth_start_handler,
 };
-use graph_routes::{commit_details_handler, graph_handler, prs_handler, suggest_commit_handler};
-use integrate_routes::{
-    abort_rebase_handler, continue_rebase_handler, integrate_handler, preview_integrate_handler,
-    pull_both_handler, save_integration_mode_handler, scan_sync_handler,
-};
-use routes::{get_repos, init_config, post_config, status_handler, AppState};
 use rust_embed::Embed;
 use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::net::TcpListener;
@@ -140,6 +138,7 @@ async fn run_server(port: u16, port_file: Option<PathBuf>, is_serve_mode: bool) 
         .route("/api/git/abort-rebase", post(abort_rebase_handler))
         .route("/api/git/continue-rebase", post(continue_rebase_handler))
         .route("/api/git/fetch", post(fetch_handler))
+        .route("/api/git/switch-remote", post(switch_remote_handler))
         .route("/api/git/pull", post(pull_handler))
         .route("/api/git/push", post(push_handler))
         .route("/api/git/publish", post(publish_handler))

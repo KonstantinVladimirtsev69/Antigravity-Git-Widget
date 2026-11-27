@@ -8,8 +8,8 @@ use axum::{
 };
 use git_widget_core::{
     diff::get_diff_files,
-    github_prs::list_github_prs_with_token,
-    graph::{get_commit_details, get_commit_graph},
+    github_prs::list_github_prs_for_remote_with_token,
+    graph::{get_commit_details, get_commit_graph_for_remote},
 };
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
@@ -20,6 +20,8 @@ pub struct GraphQuery {
     #[serde(default = "default_true")]
     pub all: bool,
     pub author: Option<String>,
+    #[serde(default)]
+    pub remote: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -53,7 +55,15 @@ pub async fn graph_handler(
     if let Err(r) = check_auth(&st, &headers) {
         return r;
     }
-    match get_commit_graph(Path::new(&q.repo), q.all, q.author.as_deref(), 50).await {
+    match get_commit_graph_for_remote(
+        Path::new(&q.repo),
+        q.all,
+        q.author.as_deref(),
+        q.remote.as_deref(),
+        50,
+    )
+    .await
+    {
         Ok(data) => Json(data).into_response(),
         Err(e) => map_err(e),
     }
@@ -82,7 +92,9 @@ pub async fn prs_handler(
         return r;
     }
     let token = st.config.read().await.github_token.clone();
-    let prs = list_github_prs_with_token(Path::new(&q.repo), token.as_deref()).await;
+    let prs =
+        list_github_prs_for_remote_with_token(Path::new(&q.repo), token.as_deref(), q.remote.as_deref())
+            .await;
     Json(prs).into_response()
 }
 
