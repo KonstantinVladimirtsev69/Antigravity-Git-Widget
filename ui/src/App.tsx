@@ -38,26 +38,16 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showRemoteForm, setShowRemoteForm] = useState(false);
 
-  const clearMessages = useCallback(() => {
-    setNotice('');
-    setError('');
-  }, []);
+  const clearMessages = useCallback(() => { setNotice(''); setError(''); }, []);
 
   const updater = useAppUpdater();
   const onCloneSuccessRef = useRef<(targetPath: string) => void>(() => {});
   const clone = useClone((targetPath) => onCloneSuccessRef.current(targetPath));
-  const data = useRepoData(
-    busy,
-    showSettings || showRemoteForm || updater.modalOpen || clone.modalOpen,
-    setError,
-    clearMessages,
-  );
+  const data = useRepoData(busy, showSettings || showRemoteForm || updater.modalOpen || clone.modalOpen, setError, clearMessages);
   onCloneSuccessRef.current = (targetPath: string) => {
     data.addAdHocRepo(targetPath);
     const parent = parentDirOf(targetPath);
-    if (parent) {
-      data.setConfig((prev) => ({ ...prev, last_clone_dir: parent }));
-    }
+    if (parent) data.setConfig((prev) => ({ ...prev, last_clone_dir: parent }));
   };
   const flow = useIntegrationFlow({
     selectedRepo: data.selectedRepo, status: data.status, selectedRemote: data.selectedRemote,
@@ -124,6 +114,7 @@ export default function App() {
         repoOptions={data.repoOptions}
         status={status}
         selectedRemote={data.selectedRemote}
+        githubUrl={data.graphData?.github_url ?? null}
         autoMatched={data.autoMatched}
         tab={data.tab}
         diffCount={diffCount}
@@ -136,7 +127,7 @@ export default function App() {
         onSelectRepo={(val) => { data.setAutoMatched(false); data.setSelectedRepo(val); }}
         onRefresh={() => void data.refreshRepoData(selectedRepo)}
         onToggleSettings={() => setShowSettings((v) => !v)}
-        onSelectRemote={data.setSelectedRemote}
+        onSelectRemote={(r) => void data.switchRemote(r)}
         onToggleRemoteForm={() => setShowRemoteForm((v) => !v)}
         onSwitchTab={(t) => { data.setTab(t); if (t === 'diff') void data.refreshRepoData(selectedRepo); }}
       />
@@ -147,6 +138,7 @@ export default function App() {
         showSettings={showSettings}
         showRemoteForm={showRemoteForm}
         selectedRepo={selectedRepo}
+        existingRemotes={status?.remotes ?? []}
         repos={data.repos}
         config={data.config}
         busy={busy}
@@ -208,7 +200,7 @@ export default function App() {
             mergeDir={flow.mergeDir} integrationMode={flow.integrationMode} dualSync={flow.dualSync}
             scanningSync={flow.scanningSync} busy={busy}
             onCheckoutLocal={(b) => void flow.executeGuarded('checkout', b, { mode: 'fail_if_dirty' })}
-            onCheckoutRemote={(rb) => void flow.runSimple(() => api.checkoutRemote(selectedRepo, rb))}
+            onCheckoutRemote={(rb) => void flow.runSimple(() => api.checkoutRemote(selectedRepo, rb, data.selectedRemote || undefined))}
             onCreateBranch={async (n) => { await flow.runSimple(() => api.createBranch(selectedRepo, n)); }}
             onDeleteBranch={async (n, f) => { await flow.runSimple(() => api.deleteBranch(selectedRepo, n, f)); }}
             onFetch={() => { data.lastFetchAtRef.current = Date.now(); void flow.runSimple(() => api.fetchAll(selectedRepo, data.selectedRemote || undefined)); }}
@@ -277,7 +269,12 @@ export default function App() {
         </>
       )}
 
-      <NoticeFooter notice={notice} error={error} onClearNotice={() => setNotice('')} />
+      <NoticeFooter
+        notice={notice} error={error} fetchWarning={data.fetchWarning}
+        onClearNotice={() => setNotice('')}
+        onRetryFetch={() => { if (data.selectedRemote) void data.switchRemote(data.selectedRemote); }}
+        onDismissFetchWarning={data.clearFetchWarning}
+      />
     </div>
   );
 }

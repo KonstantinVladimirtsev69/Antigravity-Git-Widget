@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { BranchCreateDelete } from './components/BranchCreateDelete';
 import { IntegrateSplitButton, getModeLabel } from './IntegrateSplitButton';
 import { Picker } from './Picker';
 import type { DualBranchSync, IntegrationMode, RepoStatus } from './types';
+import { filterRemoteBranchesForRemote, isDiverged } from './utils/remoteFocus';
 
 interface BranchPanelProps {
   status: RepoStatus;
@@ -48,13 +50,9 @@ export function BranchPanel({
   onIntegrationModeChange,
   onIntegrate,
 }: BranchPanelProps) {
-  const [branchMode, setBranchMode] = useState<'none' | 'create' | 'delete'>('none');
-  const [newBranch, setNewBranch] = useState('');
-  const [delBranch, setDelBranch] = useState('');
-  const [forceDel, setForceDel] = useState(false);
-
   const hasRemote = status.remotes.length > 0;
-  const isPublished = Boolean(status.upstream);
+  const isPublished = status.upstream != null;
+  const diverged = isDiverged(status);
 
   const formatTracking = (branch: string) => {
     const tr = status.branch_tracking?.[branch];
@@ -67,20 +65,19 @@ export function BranchPanel({
   };
 
   const branchOptions = useMemo(() => {
-    const localSet = new Set(status.local_branches);
     const locals = status.local_branches.map((b) => ({
       value: `local:${b}`,
       label: b,
       sub: formatTracking(b),
     }));
-    const remotes = status.remote_branches
-      .filter((rb) => {
-        const shortName = rb.includes('/') ? rb.slice(rb.indexOf('/') + 1) : rb;
-        return !localSet.has(shortName);
-      })
-      .map((rb) => ({ value: `remote:${rb}`, label: rb, sub: 'remote' }));
+    const remotes = filterRemoteBranchesForRemote(
+      status.remote_branches,
+      status.local_branches,
+      selectedRemote,
+      status.remotes,
+    ).map((rb) => ({ value: `remote:${rb}`, label: rb, sub: 'remote' }));
     return [...locals, ...remotes];
-  }, [status.local_branches, status.remote_branches, status.branch_tracking]);
+  }, [status.local_branches, status.remote_branches, status.branch_tracking, status.remotes, selectedRemote]);
 
   const otherLocals = useMemo(
     () => status.local_branches.filter((b) => b !== status.branch),
@@ -107,113 +104,35 @@ export function BranchPanel({
 
   return (
     <div className="gw-card gw-stack">
-      <div className="gw-row">
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Picker
-            value={`local:${status.branch}`}
-            searchable
-            options={branchOptions}
-            disabled={busy}
-            onChange={(val) => {
-              if (val.startsWith('local:')) {
-                const name = val.slice(6);
-                if (name !== status.branch) onCheckoutLocal(name);
-              } else if (val.startsWith('remote:')) {
-                onCheckoutRemote(val.slice(7));
-              }
-            }}
-          />
-        </div>
-        <button type="button" className="gw-btn" title="New branch" disabled={busy} onClick={() => setBranchMode((m) => (m === 'create' ? 'none' : 'create'))}>+</button>
-        <button
-          type="button"
-          className="gw-btn"
-          title="Delete branch"
-          disabled={busy || otherLocals.length === 0}
-          onClick={() => {
-            setDelBranch((prev) => (prev && otherLocals.includes(prev) ? prev : otherLocals[0] ?? ''));
-            setForceDel(false);
-            setBranchMode((m) => (m === 'delete' ? 'none' : 'delete'));
+      <BranchCreateDelete
+        otherLocals={otherLocals}
+        busy={busy}
+        onCreateBranch={onCreateBranch}
+        onDeleteBranch={onDeleteBranch}
+      >
+        <Picker
+          value={`local:${status.branch}`}
+          searchable
+          options={branchOptions}
+          disabled={busy}
+          onChange={(val) => {
+            if (val.startsWith('local:')) {
+              const name = val.slice(6);
+              if (name !== status.branch) onCheckoutLocal(name);
+            } else if (val.startsWith('remote:')) {
+              onCheckoutRemote(val.slice(7));
+            }
           }}
-        >
-          ⌫
-        </button>
-      </div>
+        />
+      </BranchCreateDelete>
 
-      {branchMode === 'create' && (
-        <div className="gw-row">
-          <input
-            className="gw-input"
-            placeholder="feat/new-branch"
-            value={newBranch}
-            onChange={(e) => setNewBranch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && newBranch.trim()) {
-                const name = newBranch.trim();
-                setNewBranch('');
-                setBranchMode('none');
-                void onCreateBranch(name);
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="gw-btn gw-btn-primary"
-            disabled={busy || !newBranch.trim()}
-            onClick={() => {
-              const name = newBranch.trim();
-              setNewBranch('');
-              setBranchMode('none');
-              void onCreateBranch(name);
-            }}
-          >
-            Create
-          </button>
-        </div>
-      )}
-
-      {branchMode === 'delete' && (
-        <div className="gw-stack" style={{ gap: 5 }}>
-          <div className="gw-row">
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Picker
-                value={delBranch}
-                placeholder="Branch to delete..."
-                options={otherLocals.map((b) => ({ value: b, label: b }))}
-                onChange={setDelBranch}
-              />
-            </div>
-            <button
-              type="button"
-              className="gw-btn gw-btn-danger"
-              disabled={busy || !delBranch}
-              onClick={() => {
-                const name = delBranch;
-                setBranchMode('none');
-                void onDeleteBranch(name, forceDel);
-              }}
-            >
-              Delete
-            </button>
-          </div>
-          <label className="gw-row gw-muted" style={{ cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={forceDel}
-              onChange={(e) => setForceDel(e.target.checked)}
-            />
-            Force delete (-D)
-          </label>
-        </div>
-      )}
-
-      <div className="gw-row">
-        <button className="gw-btn" style={{ flex: 1 }} disabled={busy || !hasRemote} onClick={onFetch}>
+      <div className="gw-row" style={{ flexWrap: 'wrap' }}>
+        <button className="gw-btn" style={{ flex: '1 1 70px' }} disabled={busy || !hasRemote} onClick={onFetch}>
           Fetch
         </button>
         <button
           className={`gw-btn ${status.behind > 0 ? 'gw-btn-primary' : ''}`}
-          style={{ flex: 1 }}
+          style={{ flex: '1 1 70px' }}
           disabled={busy || !hasRemote}
           onClick={onPull}
         >
@@ -221,7 +140,7 @@ export function BranchPanel({
         </button>
         <button
           className={`gw-btn ${!isPublished || status.ahead > 0 ? 'gw-btn-primary' : ''}`}
-          style={{ flex: 1 }}
+          style={{ flex: '1 1 90px' }}
           disabled={busy || (hasRemote && isPublished && status.ahead === 0 && !selectedRemote)}
           onClick={onPush}
         >
@@ -233,6 +152,14 @@ export function BranchPanel({
                 ? `Push ↑${status.ahead}`
                 : 'Push'}
         </button>
+        {diverged && (
+          <span
+            className="gw-badge gw-badge-warn"
+            title="Branch has diverged from selected remote; Pull to merge or review conflicts"
+          >
+            Diverged ↑{status.ahead} ↓{status.behind}
+          </span>
+        )}
       </div>
 
       <div className="gw-row">

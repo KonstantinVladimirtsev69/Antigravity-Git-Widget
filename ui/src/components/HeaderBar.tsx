@@ -8,6 +8,7 @@ interface HeaderBarProps {
   repoOptions: PickerOption[];
   status: RepoStatus | null;
   selectedRemote: string;
+  githubUrl?: string | null;
   autoMatched: boolean;
   tab: 'flow' | 'diff';
   diffCount: number;
@@ -30,6 +31,7 @@ export function HeaderBar({
   repoOptions,
   status,
   selectedRemote,
+  githubUrl,
   autoMatched,
   tab,
   diffCount,
@@ -106,6 +108,18 @@ export function HeaderBar({
           >
             +
           </button>
+          {githubUrl && (
+            <a
+              className="gw-btn"
+              style={{ textDecoration: 'none' }}
+              href={githubUrl}
+              target="_blank"
+              rel="noreferrer"
+              title="Open remote on GitHub"
+            >
+              ↗
+            </a>
+          )}
         </div>
       )}
 
